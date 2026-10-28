@@ -136,8 +136,11 @@ QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTe
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { color: %disabled%; }
 /* In-place editors (rename in the tree, property grid cells) sit in a row
    only a line tall: drop the form padding so the text is not clipped. */
-#qt_scrollarea_viewport > QLineEdit, #qt_scrollarea_viewport > QWidget > QLineEdit {
+#qt_scrollarea_viewport > QLineEdit, #qt_scrollarea_viewport > QWidget > QLineEdit,
+#qt_scrollarea_viewport > QComboBox, #qt_scrollarea_viewport > QSpinBox {
     padding: 0 4px; margin: 0; border-radius: 4px; border-color: %accent%; }
+#qt_scrollarea_viewport > QComboBox::drop-down { width: 18px; }
+#qt_scrollarea_viewport > QSpinBox::up-button, #qt_scrollarea_viewport > QSpinBox::down-button { width: 14px; }
 QComboBox::drop-down { border: none; width: 24px; }
 QComboBox::down-arrow { image: %chevron%; width: 14px; height: 14px; }
 QComboBox QAbstractItemView { background: %menu%; border: 1px solid %border%; border-radius: 6px; padding: 4px; outline: 0; selection-background-color: %hover%; selection-color: %text%; }

@@ -255,6 +255,26 @@ private slots:
             sd.grab().save(dir + "/dlg-settings.png");
             sshlx_conf_free(c);
         }
+        // In-place editors in the property grid: text, drop-down, number.
+        {
+            QTreeView *v = w->propertyGrid()->view();
+            QAbstractItemModel *m = v->model();
+            int shot = 0;
+            for (const QString &label : {QString("Name"), QString("Icon"), QString("Port")}) {
+                const QModelIndexList hits = m->match(m->index(0, 0), Qt::DisplayRole, label, 1,
+                                                      Qt::MatchExactly | Qt::MatchRecursive);
+                if (hits.isEmpty())
+                    continue;
+                v->setCurrentIndex(hits.first().siblingAtColumn(1));
+                v->edit(hits.first().siblingAtColumn(1));
+                QTest::qWait(200);
+                w->propertyGrid()->grab().save(dir + QString("/grid-edit-%1.png").arg(shot++));
+                if (QWidget *ed = v->indexWidget(hits.first().siblingAtColumn(1)))
+                    QTest::keyClick(ed, Qt::Key_Escape);
+                QTest::qWait(50);
+            }
+        }
+
         // Session tabs: connected, disconnected, and the dock tabs beside them.
         {
             Pty pty;
