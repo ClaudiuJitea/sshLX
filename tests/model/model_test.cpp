@@ -143,9 +143,9 @@ private slots:
         QVERIFY(rules.match(r.key, QString()));
         QVERIFY(rules.match("by-id:/other", "usb:0403:6001:A10"));
         QVERIFY(!rules.match("by-id:/other", "usb:0403:6001:B20"));
-        // Defaults: 115200 8N1, no flow control, ask.
+        // Defaults: detected speed, 8N1, no flow control, ask.
         SerialRule d;
-        QCOMPARE(d.speed, 115200);
+        QCOMPARE(d.speed, 0);
         QCOMPARE(d.dataBits, 8);
         QCOMPARE(d.parity, 0);
         QCOMPARE(d.stopHalfBits, 2);

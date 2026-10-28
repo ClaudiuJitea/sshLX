@@ -4,11 +4,14 @@
  * identity change on re-plug.
  */
 #define _GNU_SOURCE
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 #include "serialdetect.h"
@@ -77,6 +80,60 @@ static void cb(void *ctx, sd_event ev, const sd_device *d)
     last = *d;
     printf("%s %s %s %04x:%04x '%s' '%s' '%s'\n", ev == SD_ADDED ? "ADD" : "DEL",
            d->name, d->by_id, d->vid, d->pid, d->manufacturer, d->product, d->serial);
+}
+
+/* A fake console on a pty: the reply to the n-th carriage return it
+ * receives is replies[n] (NULL: stay silent). Returns the probed speed. */
+static int probe_fake(const char *const *replies, size_t nreplies,
+                      const size_t *lens)
+{
+    int master = posix_openpt(O_RDWR | O_NOCTTY);
+    CHECK(master >= 0 && grantpt(master) == 0 && unlockpt(master) == 0);
+    char slave[128];
+    CHECK(ptsname_r(master, slave, sizeof(slave)) == 0);
+    pid_t pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        for (size_t i = 0; i < nreplies; i++) {
+            char c;
+            do {
+                if (read(master, &c, 1) != 1)
+                    _exit(0);
+            } while (c != '\r');
+            if (replies[i] && write(master, replies[i], lens[i]) < 0)
+                _exit(1);
+        }
+        _exit(0);
+    }
+    static const int speeds[] = {9600, 115200, 19200};
+    int err = 0;
+    int got = sd_probe_speed(slave, speeds, 3, 200, &err);
+    close(master);
+    waitpid(pid, NULL, 0);
+    return got;
+}
+
+static void probe_tests(void)
+{
+    /* A console answers its prompt at the first speed tried. */
+    const char *prompt[] = {"\r\nRouter>"};
+    size_t plen[] = {9};
+    CHECK(probe_fake(prompt, 1, plen) == 9600);
+
+    /* Framing garbage at the wrong speed, a prompt at the right one. */
+    const char *garbage[] = {"\x00\xf8\x80\xff\x00\xe0", "\r\nswitch#"};
+    size_t glen[] = {6, 9};
+    CHECK(probe_fake(garbage, 2, glen) == 115200);
+
+    /* Nothing answers. */
+    const char *silent[] = {NULL, NULL, NULL};
+    size_t slen[] = {0, 0, 0};
+    CHECK(probe_fake(silent, 3, slen) == 0);
+
+    /* Not a device. */
+    int err = 0;
+    const int speeds[] = {9600};
+    CHECK(sd_probe_speed("/nonexistent/tty", speeds, 1, 50, &err) == 0 && err == ENOENT);
 }
 
 int main(void)
@@ -155,6 +212,8 @@ int main(void)
     sd_monitor_free(real);
 
     sh("rm -rf '%s'", root);
+    probe_tests();
+
     printf("serialdetect_test: OK\n");
     return 0;
 }

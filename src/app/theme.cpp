@@ -33,6 +33,9 @@ public:
         case SP_DialogYesButton: case SP_DialogNoButton: case SP_DialogResetButton:
         case SP_DialogHelpButton: case SP_DialogOpenButton:
             return QIcon();
+        case SP_LineEditClearButton:
+            // The desktop's red "edit-clear" clashes; use the app's line icon.
+            return Icons::get(QStringLiteral("close"));
         default:
             return QProxyStyle::standardIcon(sp, opt, w);
         }
@@ -128,6 +131,10 @@ QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit, QText
     padding: 5px 8px; selection-background-color: %accent%; selection-color: #ffffff; }
 QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border-color: %accent%; }
 QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled { color: %disabled%; }
+/* In-place editors (rename in the tree, property grid cells) sit in a row
+   only a line tall: drop the form padding so the text is not clipped. */
+#qt_scrollarea_viewport > QLineEdit, #qt_scrollarea_viewport > QWidget > QLineEdit {
+    padding: 0 4px; margin: 0; border-radius: 4px; border-color: %accent%; }
 QComboBox::drop-down { border: none; width: 24px; }
 QComboBox::down-arrow { image: %chevron%; width: 14px; height: 14px; }
 QComboBox QAbstractItemView { background: %menu%; border: 1px solid %border%; border-radius: 6px; padding: 4px; outline: 0; selection-background-color: %hover%; selection-color: %text%; }

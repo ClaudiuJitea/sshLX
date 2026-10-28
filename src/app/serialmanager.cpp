@@ -12,6 +12,8 @@
 #include <QPushButton>
 #include <QSettings>
 #include <QSpinBox>
+#include <QStatusBar>
+#include <QThread>
 #include <QToolBar>
 
 #ifdef SSHLX_HAVE_DBUS
@@ -20,8 +22,11 @@
 #endif
 
 #include <cstring>
+#include <iterator>
+#include <memory>
 
 #include "dialogkit.h"
+#include "documentarea.h"
 #include "mainwindow.h"
 #include "serialdetect.h"
 #include "sessionwidget.h"
@@ -33,6 +38,19 @@ static int serialProtocol()
         if (!strcmp(sshlx_protocol_get(i)->name, "serial"))
             return sshlx_protocol_get(i)->id;
     return -1;
+}
+
+// Tried in this order when a rule's speed is "auto": 9600 is the console
+// default of most network gear (Cisco, Juniper, HP, APC), 115200 that of
+// most boards and modern devices.
+static const int kProbeSpeeds[] = {9600, 115200, 19200, 38400, 57600, 230400};
+// Used when nothing answers the probe.
+static const int kFallbackSpeed = 9600;
+
+static QString detectedKey(const QString &ruleKey)
+{
+    QString k = ruleKey;
+    return "serial/detectedSpeed/" + k.replace('/', '|');
 }
 
 // ---- banner -------------------------------------------------------------------
@@ -126,7 +144,10 @@ sshlx_conf *SerialManager::confFor(const SerialPortList::Device &d) const
     sshlx_conf_set_int(c, sshlx_conf_key_protocol(), serialProtocol());
     // The by-id path survives renumbering (ttyUSB0 -> ttyUSB1).
     sshlx_conf_set_str(c, sshlx_conf_key_find("serline"), d.stablePath().toUtf8().constData());
-    sshlx_conf_set_int(c, sshlx_conf_key_find("serspeed"), r.speed);
+    int speed = r.speed;
+    if (speed <= 0)
+        speed = QSettings().value(detectedKey(d.ruleKey()), kFallbackSpeed).toInt();
+    sshlx_conf_set_int(c, sshlx_conf_key_find("serspeed"), speed);
     sshlx_conf_set_int(c, sshlx_conf_key_find("serdatabits"), r.dataBits);
     sshlx_conf_set_int(c, sshlx_conf_key_find("serparity"), r.parity);
     sshlx_conf_set_int(c, sshlx_conf_key_find("serstopbits"), r.stopHalfBits);
@@ -136,11 +157,58 @@ sshlx_conf *SerialManager::confFor(const SerialPortList::Device &d) const
     return c;
 }
 
-SessionWidget *SerialManager::openDevice(const SerialPortList::Device &d, bool withOptions)
+void SerialManager::openDevice(const SerialPortList::Device &d, bool withOptions)
+{
+    const QString key = d.ruleKey();
+    if (m_probing.contains(key))
+        return;   // already detecting; the tab opens when that finishes
+    // A port serves one session at a time: bring its tab forward (and
+    // reconnect it if it has ended) rather than open a second one.
+    if (!withOptions) {
+        for (SessionWidget *s : m_main->sessions()) {
+            if (deviceBoundTo(s, d)) {
+                m_main->documents()->activate(s);
+                if (s->state() == SSHLX_STATE_DISCONNECTED)
+                    s->reconnect();
+                return;
+            }
+        }
+    }
+    // Probing would steal the bytes of a tab already talking to the device.
+    bool inUse = false;
+    for (SessionWidget *s : m_main->sessions())
+        if (s->state() != SSHLX_STATE_DISCONNECTED && deviceBoundTo(s, d))
+            inUse = true;
+    if (ruleFor(d).speed > 0 || inUse) {
+        openWithRule(d, withOptions);
+        return;
+    }
+    m_probing.insert(key);
+    m_main->statusBar()->showMessage(tr("Detecting the line speed of %1...").arg(d.node));
+    auto speed = std::make_shared<int>(0);
+    const QByteArray node = d.node.toUtf8();
+    QThread *t = QThread::create([speed, node] {
+        *speed = sd_probe_speed(node.constData(), kProbeSpeeds, std::size(kProbeSpeeds),
+                                300, nullptr);
+    });
+    connect(t, &QThread::finished, t, &QObject::deleteLater);
+    connect(t, &QThread::finished, this, [this, d, withOptions, speed, key] {
+        m_probing.remove(key);
+        QSettings().setValue(detectedKey(key), *speed > 0 ? *speed : kFallbackSpeed);
+        m_main->statusBar()->showMessage(
+            *speed > 0 ? tr("%1: detected %2 baud").arg(d.node).arg(*speed)
+                       : tr("%1: no reply to the speed probe, using %2 baud")
+                             .arg(d.node).arg(kFallbackSpeed),
+            6000);
+        openWithRule(d, withOptions);
+    });
+    t->start();
+}
+
+void SerialManager::openWithRule(const SerialPortList::Device &d, bool withOptions)
 {
     sshlx_conf *c = confFor(d);
     QString name = d.product.isEmpty() ? d.node : d.product;
-    SessionWidget *s = nullptr;
     if (withOptions) {
         auto *dlg = new SettingsDialog(c, false, 0, tr("sshLX Configuration - %1").arg(name),
                                        m_main, true);
@@ -152,12 +220,11 @@ SessionWidget *SerialManager::openDevice(const SerialPortList::Device &d, bool w
             s->setSerialByIdPath(path);
         });
         dlg->open();
-        return nullptr;
+        return;
     }
-    s = m_main->openSession(c, name);
+    SessionWidget *s = m_main->openSession(c, name);
     s->setSerialByIdPath(d.stablePath());
     sshlx_conf_free(c);
-    return s;
 }
 
 bool SerialManager::deviceBoundTo(const SessionWidget *s, const SerialPortList::Device &d) const
@@ -289,9 +356,11 @@ void SerialManager::editRule(const SerialPortList::Device &d)
     whenBox->addRow(tr("When plugged in"), action);
     auto *speed = new QComboBox;
     speed->setEditable(true);
+    const QString autoSpeed = tr("Auto-detect");
+    speed->addItem(autoSpeed);
     for (int s : {9600, 19200, 38400, 57600, 115200, 230400, 460800, 921600, 1000000})
         speed->addItem(QString::number(s));
-    speed->setCurrentText(QString::number(r.speed));
+    speed->setCurrentText(r.speed > 0 ? QString::number(r.speed) : autoSpeed);
     form->addRow(tr("Speed (baud)"), speed);
     auto *bits = new QSpinBox;
     bits->setRange(5, 8);
@@ -329,7 +398,7 @@ void SerialManager::editRule(const SerialPortList::Device &d)
     if (dlg.exec() != QDialog::Accepted)
         return;
     r.action = SerialRule::Action(action->currentData().toInt());
-    r.speed = speed->currentText().toInt() > 0 ? speed->currentText().toInt() : 115200;
+    r.speed = qMax(0, speed->currentText().toInt());   // "Auto-detect" -> 0
     r.dataBits = bits->value();
     r.parity = parity->currentIndex();
     r.stopHalfBits = stop->currentData().toInt();

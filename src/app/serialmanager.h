@@ -8,6 +8,7 @@
 #include <QList>
 #include <QObject>
 #include <QPointer>
+#include <QSet>
 
 #include "serialportlist.h"
 #include "serialrules.h"
@@ -50,9 +51,12 @@ public:
     void saveRules();
     // Rule for a device, or a default one keyed to it.
     SerialRule ruleFor(const SerialPortList::Device &d) const;
-    // PuTTY Conf for a device using its rule's line settings. Caller frees.
+    // PuTTY Conf for a device using its rule's line settings (for an
+    // auto-speed rule, the last detected speed). Caller frees.
     sshlx_conf *confFor(const SerialPortList::Device &d) const;
-    SessionWidget *openDevice(const SerialPortList::Device &d, bool withOptions = false);
+    // Opens a tab for the device. With an auto-speed rule the line speed is
+    // probed first (in the background), so the tab appears a moment later.
+    void openDevice(const SerialPortList::Device &d, bool withOptions = false);
     void editRule(const SerialPortList::Device &d);
     DeviceBanner *banner() const { return m_banner; }
     bool deviceBoundTo(const SessionWidget *s, const SerialPortList::Device &d) const;
@@ -68,6 +72,7 @@ private:
     void showNext();
     void desktopNotify(const SerialPortList::Device &d);
     void answer(int choice);
+    void openWithRule(const SerialPortList::Device &d, bool withOptions);
 
     MainWindow *m_main;
     SerialPortList *m_ports;
@@ -75,4 +80,5 @@ private:
     QToolBar *m_bar;
     DeviceBanner *m_banner;
     QList<SerialPortList::Device> m_queue;
+    QSet<QString> m_probing;   // rule keys whose speed is being detected
 };

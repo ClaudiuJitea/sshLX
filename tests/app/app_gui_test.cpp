@@ -724,8 +724,9 @@ private slots:
         SessionWidget *s = m_main->sessions().last();
         QTRY_COMPARE(s->state(), SSHLX_STATE_CONNECTED);
         QCOMPARE(s->serialByIdPath(), d.byId);
-        // Template: 115200 8N1, stable by-id path as the serial line.
-        QCOMPARE(sshlx_conf_get_int(s->conf(), sshlx_conf_key_find("serspeed")), 115200);
+        // Template: detected speed 8N1 (the fake device doesn't answer the
+        // probe: the 9600 fallback), stable by-id path as the serial line.
+        QCOMPARE(sshlx_conf_get_int(s->conf(), sshlx_conf_key_find("serspeed")), 9600);
         QCOMPARE(QString::fromUtf8(sshlx_conf_get_str(s->conf(), sshlx_conf_key_find("serline"))), d.byId);
         pty.write("from-usb-device\r\n");
         QTRY_VERIFY(s->view()->screenText().contains("from-usb-device"));
@@ -940,6 +941,19 @@ private slots:
                 p1 = s;
         QVERIFY(p1);
         QCOMPARE(docs->dockFor(p0)->dockAreaWidget(), docs->dockFor(p1)->dockAreaWidget());
+
+        // Opening a connection that has a tab brings that tab forward;
+        // "Open in New Tab" (openConnection) always adds one.
+        int count = m_main->sessions().size();
+        m_main->showConnection(conns[0]);
+        QCOMPARE(m_main->sessions().size(), count);
+        QCOMPARE(docs->currentSession(), p0);
+        m_main->openConnection(conns[0]);
+        QCOMPARE(m_main->sessions().size(), count + 1);
+        QSettings().setValue("behaviour/reuseTab", false);
+        m_main->showConnection(conns[1]);
+        QCOMPARE(m_main->sessions().size(), count + 2);
+        QSettings().remove("behaviour/reuseTab");
 
         for (SessionWidget *s : docs->sessions())
             docs->removeSession(s);

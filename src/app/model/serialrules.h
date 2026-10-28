@@ -16,7 +16,7 @@ struct SerialRule {
     QString usbKey;         // "usb:VID:PID:SERIAL" alternative identity (may be empty)
     QString label;          // product name, for the rules list
     Action action = Ask;
-    int speed = 115200;
+    int speed = 0;          // baud; 0 = detect when the device is opened
     int dataBits = 8;
     int parity = 0;         // PuTTY SER_PAR_*: 0 none, 1 odd, 2 even, 3 mark, 4 space
     int stopHalfBits = 2;   // PuTTY stores stop bits in halves: 2 = 1 stop bit

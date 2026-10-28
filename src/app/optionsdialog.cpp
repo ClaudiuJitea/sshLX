@@ -126,12 +126,17 @@ OptionsDialog::OptionsDialog(MainWindow *main) : QDialog(main), m_main(main)
 
     m_restore = new QCheckBox(tr("Restore open sessions on startup"));
     m_restore->setChecked(st.value("behaviour/restoreSessions", false).toBool());
+    m_reuseTab = new QCheckBox(tr("Switch to an open tab instead of opening another"));
+    m_reuseTab->setChecked(st.value("behaviour/reuseTab", true).toBool());
     m_closeOnExit = new QCheckBox(tr("Close tabs when the session ends"));
     m_closeOnExit->setChecked(st.value("behaviour/closeTabOnExit", false).toBool());
     auto *sessions = new QVBoxLayout;
     sessions->setSpacing(10);
     sessions->addWidget(withHint(m_restore, tr("Reopens the tabs and their dock layout "
                                                "from the last session.")));
+    sessions->addWidget(withHint(m_reuseTab, tr("Opening a connection that already has a tab "
+                                                "brings that tab forward. \"Open in New Tab\" "
+                                                "in the tree's menu always opens another.")));
     sessions->addWidget(withHint(m_closeOnExit, tr("As PuTTY's \"Close window on exit\". "
                                                    "Otherwise the tab stays open with a "
                                                    "Reconnect bar.")));
@@ -215,7 +220,8 @@ QWidget *OptionsDialog::buildSerial()
             r.action == SerialRule::AutoConnect ? tr("Connect automatically")
             : r.action == SerialRule::Ignore ? tr("Ignore") : tr("Ask")));
         m_rules->setItem(row, 2, new QTableWidgetItem(
-            QStringLiteral("%1 %2%3%4").arg(r.speed).arg(r.dataBits)
+            QStringLiteral("%1 %2%3%4").arg(r.speed > 0 ? QString::number(r.speed) : tr("auto"))
+                .arg(r.dataBits)
                 .arg(QChar(parity[qBound(0, r.parity, 4)]))
                 .arg(r.stopHalfBits == 2 ? "1" : r.stopHalfBits == 3 ? "1.5" : "2")));
         m_rules->setItem(row, 3, new QTableWidgetItem(r.key));
@@ -303,6 +309,7 @@ void OptionsDialog::apply()
     QSettings st;
     st.setValue("behaviour/restoreSessions", m_restore->isChecked());
     st.setValue("behaviour/closeTabOnExit", m_closeOnExit->isChecked());
+    st.setValue("behaviour/reuseTab", m_reuseTab->isChecked());
     st.setValue("serial/udev", m_udev->isChecked());
     st.setValue("notifications/desktop", m_desktop->isChecked());
     Keyring::setEnabled(m_keyring->isChecked());

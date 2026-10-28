@@ -72,6 +72,15 @@ size_t sd_scan(const char *sysfs_root, const char *dev_root, sd_device **out);
  * *err with errno on failure. */
 bool sd_device_accessible(const char *devnode, int *err);
 
+/* Guess a console's line speed: at each of speeds[0..n) (8N1, no flow
+ * control) send a carriage return and listen up to timeout_ms for a reply.
+ * The first speed answered with readable text (a prompt or a blank line)
+ * wins, so list the likeliest first. Returns 0 if none answered or the
+ * port could not be opened (*err gets errno then). Blocks; call it off the
+ * GUI thread. */
+int sd_probe_speed(const char *devnode, const int *speeds, size_t n,
+                   int timeout_ms, int *err);
+
 #ifdef __cplusplus
 }
 #endif

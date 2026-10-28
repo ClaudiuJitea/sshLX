@@ -41,7 +41,7 @@ SerialRule SerialRule::fromJson(const QJsonObject &o)
     r.label = o["label"].toString();
     const QString a = o["action"].toString();
     r.action = a == "auto-connect" ? AutoConnect : a == "ignore" ? Ignore : Ask;
-    r.speed = o["speed"].toInt(115200);
+    r.speed = o["speed"].toInt(0);
     r.dataBits = o["dataBits"].toInt(8);
     r.parity = o["parity"].toInt(0);
     r.stopHalfBits = o["stopHalfBits"].toInt(2);

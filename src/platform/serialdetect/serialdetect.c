@@ -9,10 +9,13 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 /* ---- libudev, loaded at runtime ------------------------------------------
@@ -226,6 +229,111 @@ bool sd_device_accessible(const char *devnode, int *err)
     if (err)
         *err = errno;
     return false;
+}
+
+/* ---- speed probe -------------------------------------------------------------- */
+static speed_t baud_const(int speed)
+{
+    switch (speed) {
+    case 1200: return B1200;
+    case 2400: return B2400;
+    case 4800: return B4800;
+    case 9600: return B9600;
+    case 19200: return B19200;
+    case 38400: return B38400;
+    case 57600: return B57600;
+    case 115200: return B115200;
+    case 230400: return B230400;
+    case 460800: return B460800;
+    case 921600: return B921600;
+    default: return B0;
+    }
+}
+
+static long now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+/* Text a console sends at the right speed: printable ASCII, CR/LF, tab,
+ * backspace, ESC (ANSI sequences), BEL. At a wrong speed the bytes are
+ * framing garbage, mostly 0x00 and high-bit values. */
+static bool looks_like_text(const unsigned char *buf, size_t n)
+{
+    size_t good = 0;
+    bool newline = false;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = buf[i];
+        if (c == '\r' || c == '\n')
+            newline = true;
+        if ((c >= 0x20 && c < 0x7f) || c == '\r' || c == '\n' || c == '\t' ||
+            c == '\b' || c == 0x1b || c == 0x07)
+            good++;
+    }
+    /* A lone garbage byte can happen to be printable: want a line break or
+     * a few characters. */
+    return n > 0 && good * 10 >= n * 9 && (newline || n >= 4);
+}
+
+int sd_probe_speed(const char *devnode, const int *speeds, size_t n,
+                   int timeout_ms, int *err)
+{
+    int fd = open(devnode, O_RDWR | O_NOCTTY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) {
+        if (err)
+            *err = errno;
+        return 0;
+    }
+    struct termios t;
+    if (tcgetattr(fd, &t) < 0) {
+        if (err)
+            *err = errno;
+        close(fd);
+        return 0;
+    }
+    int found = 0;
+    for (size_t i = 0; i < n && !found; i++) {
+        speed_t b = baud_const(speeds[i]);
+        if (b == B0)
+            continue;
+        cfmakeraw(&t);
+        t.c_cflag &= ~(CSIZE | PARENB | CSTOPB | CRTSCTS);
+        t.c_cflag |= CS8 | CLOCAL | CREAD;
+        t.c_iflag &= ~(IXON | IXOFF | IXANY);
+        cfsetispeed(&t, b);
+        cfsetospeed(&t, b);
+        if (tcsetattr(fd, TCSANOW, &t) < 0)
+            continue;
+        tcflush(fd, TCIOFLUSH);
+        if (write(fd, "\r", 1) != 1)
+            continue;
+        unsigned char buf[256];
+        size_t got = 0;
+        const long deadline = now_ms() + timeout_ms;
+        long end = deadline;
+        for (;;) {
+            long left = end - now_ms();
+            if (left <= 0)
+                break;
+            struct pollfd p = {fd, POLLIN, 0};
+            if (poll(&p, 1, (int)left) <= 0)
+                break;
+            ssize_t r = read(fd, buf + got, sizeof(buf) - got);
+            if (r <= 0)
+                break;
+            got += (size_t)r;
+            if (got == sizeof(buf))
+                break;
+            /* Once a reply has started, a short quiet gap ends it. */
+            end = now_ms() + 80 < deadline ? now_ms() + 80 : deadline;
+        }
+        if (looks_like_text(buf, got))
+            found = speeds[i];
+    }
+    close(fd);
+    return found;
 }
 
 /* ---- monitor ------------------------------------------------------------------ */

@@ -25,7 +25,7 @@ private:
     QWidget *buildSerial();
 
     MainWindow *m_main;
-    QCheckBox *m_restore, *m_closeOnExit, *m_udev, *m_desktop, *m_keyring;
+    QCheckBox *m_restore, *m_reuseTab, *m_closeOnExit, *m_udev, *m_desktop, *m_keyring;
     QTableWidget *m_shortcuts, *m_rules;
     QDoubleSpinBox *m_fontSize;
     class QComboBox *m_theme;

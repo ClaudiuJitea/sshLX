@@ -100,7 +100,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     ads::CDockAreaWidget *left =
         m_dockManager->addDockWidget(ads::LeftDockWidgetArea, m_connectionsDock);
     m_connectionsDock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
-    connect(m_connections, &ConnectionsPanel::openRequested, this,
+    connect(m_connections, &ConnectionsPanel::openRequested, this, &MainWindow::showConnection);
+    connect(m_connections, &ConnectionsPanel::openInNewTabRequested, this,
             [this](ConnectionNode *n) { openConnection(n, false); });
     connect(m_connections, &ConnectionsPanel::openWithOptionsRequested, this,
             [this](ConnectionNode *n) { openConnection(n, true); });
@@ -383,6 +384,25 @@ void MainWindow::openConnection(ConnectionNode *n, bool withOptions, const QStri
     }
     openSession(c, name, id, true, panel, dockName);
     sshlx_conf_free(c);
+}
+
+void MainWindow::showConnection(ConnectionNode *n)
+{
+    if (n && QSettings().value("behaviour/reuseTab", true).toBool()) {
+        // Prefer the current tab when several belong to this connection.
+        QList<SessionWidget *> open;
+        for (SessionWidget *s : m_docs->sessions())
+            if (s->connectionId() == n->id)
+                open.append(s);
+        if (!open.isEmpty()) {
+            SessionWidget *s = open.contains(current()) ? current() : open.first();
+            m_docs->activate(s);
+            if (s->state() == SSHLX_STATE_DISCONNECTED)
+                s->reconnect();
+            return;
+        }
+    }
+    openConnection(n, false);
 }
 
 void MainWindow::importPuttySessions()

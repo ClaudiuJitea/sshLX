@@ -33,6 +33,9 @@ public:
     void openSavedSession(const QString &name);
     void openConnection(ConnectionNode *n, bool withOptions = false,
                         const QString &dockName = QString());
+    // Brings forward the connection's open tab (reconnecting it if it has
+    // ended) when "behaviour/reuseTab" is on; otherwise opens a new one.
+    void showConnection(ConnectionNode *n);
     DocumentArea *documents() const { return m_docs; }
     // Reopen tabs saved by a previous run; returns how many were opened.
     int restoreTabs(const QStringList &entries);

@@ -337,6 +337,7 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
     ConnectionNode *n = pi.isValid() ? m_model->node(s) : nullptr;
     if (n && !n->isFolder()) {
         menu.addAction(Icons::get("terminal"), tr("&Connect"), this, [this, n] { emit openRequested(n); });
+        menu.addAction(tr("Open in &New Tab"), this, [this, n] { emit openInNewTabRequested(n); });
         menu.addAction(Icons::get("settings"), tr("Connect with &Options..."), this,
                        [this, n] { emit openWithOptionsRequested(n); });
         menu.addSeparator();

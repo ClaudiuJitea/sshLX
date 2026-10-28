@@ -35,6 +35,7 @@ public slots:
 
 signals:
     void openRequested(ConnectionNode *n);
+    void openInNewTabRequested(ConnectionNode *n);
     void openWithOptionsRequested(ConnectionNode *n);
     void openSerialRequested(int deviceRow, bool withOptions);
     void serialRuleRequested(int deviceRow);

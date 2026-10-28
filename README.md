@@ -23,6 +23,7 @@
 - **PuTTY compatible:** sessions are stored in PuTTY's own format, so `putty` keeps working with them.
 - **Serial hot-plug:**
   - plugging in a device offers to connect;
+  - the line speed is detected automatically (9600 for most network consoles, 115200 for most boards);
   - per-device rules (*Always connect / Never ask*) survive renumbering;
   - tabs reconnect when their device comes back;
   - a permission error explains the `dialout` group fix.
@@ -41,9 +42,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.2.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.3.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.2.0-x86_64.AppImage && ./sshLX-0.2.0-x86_64.AppImage
+chmod +x sshLX-0.3.0-x86_64.AppImage && ./sshLX-0.3.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
