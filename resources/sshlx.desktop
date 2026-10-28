@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=sshLX
+GenericName=Terminal Client
+Comment=Tabbed SSH, Telnet and serial client built on the PuTTY core
+Exec=sshLX
+Icon=sshlx
+Terminal=false
+Categories=Network;RemoteAccess;System;TerminalEmulator;
+Keywords=ssh;telnet;serial;putty;terminal;
+StartupWMClass=sshLX

@@ -1,0 +1,791 @@
+#include "mainwindow.h"
+#include "dialogkit.h"
+#include "icons.h"
+
+#include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
+#include <DockAreaWidget.h>
+#include <DockManager.h>
+#include <DockWidget.h>
+#include <QFileDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QDir>
+#include <QFile>
+#include <QLabel>
+#include <QMenu>
+#include <QMenuBar>
+#include <QBoxLayout>
+#include <QPlainTextEdit>
+#include <QToolButton>
+#include <QProcess>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QStatusBar>
+#include <QToolBar>
+#include <QUuid>
+#include <QRegularExpression>
+#include <functional>
+
+#include "connectionspanel.h"
+#include "connectionstore.h"
+#include "documentarea.h"
+#include "keyring.h"
+#include "optionsdialog.h"
+#include "propertygrid.h"
+#include "startpage.h"
+#include "theme.h"
+#include "serialmanager.h"
+#include "serialportlist.h"
+#include "sessionwidget.h"
+#include "settingsdialog.h"
+#include "shortcuts.h"
+
+// Resources live in the sshlx-app static library, so they must be
+// registered explicitly.
+static void initResources()
+{
+    Q_INIT_RESOURCE(sshlx);
+}
+
+MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
+{
+    initResources();
+    setWindowTitle("sshLX");
+    // ---- docking (Qt Advanced Docking System) ----
+    ads::CDockManager::setConfigFlags(ads::CDockManager::DefaultOpaqueConfig);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::FocusHighlighting, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::MiddleMouseButtonClosesTab, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::DockAreaHasTabsMenuButton, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::AllTabsHaveCloseButton, true);
+    ads::CDockManager::setConfigFlag(ads::CDockManager::EqualSplitOnInsertion, true);
+    // Full tab titles; with many tabs the bar scrolls and the tab menu lists all.
+    ads::CDockManager::setConfigFlag(ads::CDockManager::DisableTabTextEliding, true);
+    m_dockManager = new ads::CDockManager(this);   // becomes the central widget
+    m_dockManager->setStyleSheet(Theme::dockStyleSheet());
+    m_docs = new DocumentArea(m_dockManager, this);
+
+    // The Start page anchors the session area, so the side panels keep
+    // their own column even with no session open.
+    auto *start = new StartPage;
+    m_startDock = new ads::CDockWidget(m_dockManager, tr("Start"));
+    m_startDock->setObjectName("StartDock");
+    m_startDock->setWidget(start, ads::CDockWidget::ForceNoScrollArea);
+    m_startDock->setIcon(Icons::get("home"));
+    m_startDock->setFeature(ads::CDockWidget::DockWidgetClosable, false);
+    m_startDock->setFeature(ads::CDockWidget::DockWidgetFloatable, false);
+    m_dockManager->addDockWidget(ads::CenterDockWidgetArea, m_startDock);
+    m_docs->setHomeDock(m_startDock);
+    // With sessions open, the Start tab shrinks to its icon.
+    connect(m_docs, &DocumentArea::sessionCountChanged, this, [this](int n) {
+        m_startDock->setWindowTitle(n ? QString() : tr("Start"));
+        m_startDock->setToolTip(tr("Start"));
+    });
+
+    m_store = new ConnectionStore(ConnectionTree::defaultPath(), this);
+    QString err;
+    if (!m_store->load(&err))
+        DialogKit::warning(this, tr("Connection tree not loaded"),
+                             tr("Could not read %1:\n%2\n\nStarting with an empty tree; "
+                                "the file was not changed.").arg(m_store->path(), err));
+    m_connections = new ConnectionsPanel(m_store);
+    m_connectionsDock = new ads::CDockWidget(m_dockManager, tr("Connections"));
+    m_connectionsDock->setObjectName("ConnectionsDock");
+    m_connectionsDock->setWidget(m_connections, ads::CDockWidget::ForceNoScrollArea);
+    m_connectionsDock->setIcon(Icons::get("connections"));
+    
+    ads::CDockAreaWidget *left =
+        m_dockManager->addDockWidget(ads::LeftDockWidgetArea, m_connectionsDock);
+    m_connectionsDock->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromContent);
+    connect(m_connections, &ConnectionsPanel::openRequested, this,
+            [this](ConnectionNode *n) { openConnection(n, false); });
+    connect(m_connections, &ConnectionsPanel::openWithOptionsRequested, this,
+            [this](ConnectionNode *n) { openConnection(n, true); });
+
+    m_grid = new PropertyGrid(m_store);
+    m_configDock = new ads::CDockWidget(m_dockManager, tr("Config"));
+    m_configDock->setObjectName("ConfigDock");
+    m_configDock->setWidget(m_grid, ads::CDockWidget::ForceNoScrollArea);
+    m_configDock->setIcon(Icons::get("properties"));
+    m_dockManager->addDockWidget(ads::BottomDockWidgetArea, m_configDock, left);
+    connect(m_connections, &ConnectionsPanel::currentNodeChanged, m_grid, &PropertyGrid::setNode);
+    connect(m_grid, &PropertyGrid::openRequested, this,
+            [this](ConnectionNode *n) { openConnection(n, false); });
+    connect(m_grid, &PropertyGrid::aboutRequested, this, &MainWindow::showAbout);
+
+    // Serial hot-plug: "Serial Ports" tree section + device banner.
+    m_bannerBar = new QToolBar(tr("Device notifications"), this);
+    m_bannerBar->setObjectName("DeviceBannerBar");
+    m_bannerBar->setMovable(false);
+    m_bannerBar->setFloatable(false);
+    addToolBar(Qt::TopToolBarArea, m_bannerBar);
+    QSettings st;
+    // SSHLX_SERIAL_SYSFS_ROOT / SSHLX_SERIAL_DEV_ROOT: test hooks only.
+    m_serial = new SerialManager(this, m_bannerBar, st.value("serial/udev", true).toBool(),
+                                 qEnvironmentVariable("SSHLX_SERIAL_SYSFS_ROOT"),
+                                 qEnvironmentVariable("SSHLX_SERIAL_DEV_ROOT"));
+    m_connections->setSerialPorts(m_serial->ports());
+    connect(m_connections, &ConnectionsPanel::openSerialRequested, this,
+            [this](int row, bool withOptions) {
+        if (row >= 0 && row < m_serial->ports()->count())
+            m_serial->openDevice(m_serial->ports()->at(row), withOptions);
+    });
+    connect(m_connections, &ConnectionsPanel::serialRuleRequested, this, [this](int row) {
+        if (row >= 0 && row < m_serial->ports()->count())
+            m_serial->editRule(m_serial->ports()->at(row));
+    });
+    connect(m_docs, &DocumentArea::closeRequested, this, &MainWindow::closeSession);
+    connect(m_docs, &DocumentArea::currentSessionChanged, this, [this](SessionWidget *s) {
+        setWindowTitle(s ? s->title() + " - sshLX" : QString("sshLX"));
+    });
+    connect(start, &StartPage::newConnection, this, [this] {
+        m_connectionsDock->toggleView(true);
+        m_connections->newConnection();
+    });
+    connect(start, &StartPage::quickConnect, this, &MainWindow::newSession);
+    connect(start, &StartPage::importSessions, this, &MainWindow::importPuttySessions);
+    connect(start, &StartPage::options, this, &MainWindow::showOptions);
+    buildMenus();
+    m_sendNextLabel = new QLabel;
+    statusBar()->addPermanentWidget(m_sendNextLabel);
+    connect(&Shortcuts::instance(), &Shortcuts::sendNextChanged, this, [this](bool armed) {
+        m_sendNextLabel->setText(armed ? tr("Next shortcut goes to the terminal") : QString());
+    });
+    resize(1100, 720);
+}
+
+MainWindow::~MainWindow() = default;
+
+SessionWidget *MainWindow::current() const
+{
+    return m_docs->currentSession();
+}
+
+QList<SessionWidget *> MainWindow::sessions() const
+{
+    return m_docs->sessions();
+}
+
+void MainWindow::buildMenus()
+{
+    Shortcuts &sc = Shortcuts::instance();
+
+    QMenu *file = menuBar()->addMenu(tr("&File"));
+    QAction *newConn = file->addAction(Icons::get("connection-new"), tr("New &Connection"), this, [this] {
+        m_connectionsDock->toggleView(true);
+        m_connections->newConnection();
+    });
+    sc.add("file.newConnection", newConn, QKeySequence());
+    file->addAction(Icons::get("folder-new"), tr("New &Folder"), this, [this] {
+        m_connectionsDock->toggleView(true);
+        m_connections->newFolder();
+    });
+    QAction *newSess = file->addAction(Icons::get("quick-connect"), tr("&Quick Connect (PuTTY dialog)..."), this,
+                                       &MainWindow::newSession);
+    sc.add("file.newSession", newSess, QKeySequence("Ctrl+Shift+N"));
+    file->addSeparator();
+    file->addAction(Icons::get("import"), tr("&Import PuTTY Sessions"), this, &MainWindow::importPuttySessions);
+    file->addAction(Icons::get("import"), tr("I&mport Connection Tree..."), this, &MainWindow::importTree);
+    file->addAction(Icons::get("export"), tr("E&xport Connection Tree..."), this, &MainWindow::exportTree);
+    QAction *saveAct = file->addAction(Icons::get("save"), tr("&Save"), this, [this] {
+        m_store->save();
+        statusBar()->showMessage(tr("Saved %1").arg(m_store->path()), 3000);
+    });
+    sc.add("file.save", saveAct, QKeySequence());
+    m_savedMenu = file->addMenu(Icons::get("terminal"), tr("&Saved Sessions"));
+    connect(m_savedMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildSavedSessionsMenu);
+    file->addSeparator();
+    QAction *quit = file->addAction(Icons::get("quit"), tr("&Quit"), this, &QWidget::close);
+    sc.add("file.quit", quit, QKeySequence("Ctrl+Shift+Q"));
+
+    m_sessionMenu = menuBar()->addMenu(tr("&Session"));
+    connect(m_sessionMenu, &QMenu::aboutToShow, this, [this] {
+        m_sessionMenu->clear();
+        if (SessionWidget *s = current())
+            s->buildContextMenu(m_sessionMenu);
+        else
+            m_sessionMenu->addAction(tr("(no session)"))->setEnabled(false);
+    });
+
+    QMenu *view = menuBar()->addMenu(tr("&View"));
+    view->addAction(m_connectionsDock->toggleViewAction());
+    view->addAction(m_configDock->toggleViewAction());
+    view->addAction(Icons::get("home"), tr("&Reset Layout"), this, [this] {
+        if (!m_dockManager->restoreState(m_defaultLayout))
+            applyDefaultSizes();
+        // Put session tabs back next to the panels.
+        for (SessionWidget *s : m_docs->sessions())
+            if (ads::CDockWidget *dw = m_docs->dockFor(s))
+                dw->toggleView(true);
+    });
+    view->addSeparator();
+    QAction *splitR = view->addAction(Icons::get("split-right"), tr("Split Tab &Right"), this,
+                                      [this] { m_docs->splitCurrent(Qt::Horizontal); });
+    sc.add("view.splitRight", splitR, QKeySequence());
+    QAction *splitD = view->addAction(Icons::get("split-down"), tr("Split Tab &Down"), this,
+                                      [this] { m_docs->splitCurrent(Qt::Vertical); });
+    sc.add("view.splitDown", splitD, QKeySequence());
+    QAction *flt = view->addAction(Icons::get("float"), tr("F&loat Tab"), this, [this] { m_docs->floatCurrent(); });
+    sc.add("view.float", flt, QKeySequence());
+    view->addSeparator();
+    QAction *full = view->addAction(Icons::get("fullscreen"), tr("&Full Screen"));
+    full->setCheckable(true);
+    connect(full, &QAction::toggled, this, [this](bool on) {
+        on ? showFullScreen() : showNormal();
+    });
+    sc.add("view.fullScreen", full, QKeySequence("F11"));
+    view->addSeparator();
+    QAction *next = view->addAction(tr("Next Tab"), this, [this] { m_docs->nextTab(+1); });
+    sc.add("tabs.next", next, QKeySequence("Ctrl+Tab"));
+    QAction *prev = view->addAction(tr("Previous Tab"), this, [this] { m_docs->nextTab(-1); });
+    sc.add("tabs.prev", prev, QKeySequence("Ctrl+Shift+Tab"));
+    QAction *next2 = view->addAction(tr("Next Tab (Page Down)"), this, [this] { m_docs->nextTab(+1); });
+    sc.add("tabs.nextPgDn", next2, QKeySequence("Ctrl+PgDown"));
+    QAction *prev2 = view->addAction(tr("Previous Tab (Page Up)"), this, [this] { m_docs->nextTab(-1); });
+    sc.add("tabs.prevPgUp", prev2, QKeySequence("Ctrl+PgUp"));
+    QAction *closeTab = view->addAction(Icons::get("close"), tr("Close Tab"), this, [this] {
+        if (current())
+            closeSession(current());
+    });
+    sc.add("tabs.close", closeTab, QKeySequence("Ctrl+Shift+W"));
+
+    QMenu *tools = menuBar()->addMenu(tr("&Tools"));
+    QAction *opts = tools->addAction(Icons::get("settings"), tr("&Options..."), this, &MainWindow::showOptions);
+    sc.add("tools.options", opts, QKeySequence());
+    QAction *evlog = tools->addAction(Icons::get("event-log"), tr("&Event Log"), this, [this] {
+        if (current())
+            current()->showEventLog();
+    });
+    sc.add("tools.eventLog", evlog, QKeySequence());
+    QAction *sendNext = tools->addAction(Icons::get("keyboard"), tr("Send Next Shortcut to Terminal"), this, [] {
+        Shortcuts::instance().armSendNext();
+    });
+    sc.add("tools.sendNext", sendNext, QKeySequence("Ctrl+Shift+F12"));
+    tools->addSeparator();
+    for (const char *exe : {"pageant", "puttygen"}) {
+        QString path = QStandardPaths::findExecutable(exe);
+        QAction *a = tools->addAction(QString("%1...").arg(exe == QString("pageant")
+                                                          ? tr("Pageant") : tr("PuTTYgen")),
+                                      this, [this, path] { launchTool(path); });
+        a->setEnabled(!path.isEmpty());
+        if (path.isEmpty())
+            a->setToolTip(tr("%1 is not installed").arg(exe));
+    }
+
+    QMenu *help = menuBar()->addMenu(tr("&Help"));
+    help->addAction(Icons::get("info"), tr("&About sshLX"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::launchTool(const QString &exe)
+{
+    if (!exe.isEmpty())
+        QProcess::startDetached(exe, {});
+}
+
+void MainWindow::rebuildSavedSessionsMenu()
+{
+    m_savedMenu->clear();
+    sshlx_strlist *l = sshlx_saved_sessions_list();
+    for (size_t i = 0; i < l->n; i++) {
+        QString name = QString::fromUtf8(l->items[i]);
+        if (name == "Default Settings")
+            continue;
+        m_savedMenu->addAction(name, this, [this, name] { openSavedSession(name); });
+    }
+    sshlx_strlist_free(l);
+    if (m_savedMenu->isEmpty())
+        m_savedMenu->addAction(tr("(none)"))->setEnabled(false);
+}
+
+SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
+                                       const QString &displayName,
+                                       const QString &connectionId,
+                                       bool connectNow, const QString &panel,
+                                       const QString &dockName)
+{
+    auto *s = new SessionWidget(conf, displayName);
+    s->setConnectionId(connectionId);
+    connect(s, &SessionWidget::titleChanged, this, [this, s] { sessionTitleChanged(s); });
+    connect(s, &SessionWidget::stateChanged, this, [this, s] {
+        m_docs->updateTab(s);
+        writeOpenTabsBreadcrumb();
+    });
+    connect(s, &SessionWidget::closeRequested, this, [this, s] { closeSession(s); });
+    connect(s, &SessionWidget::identityChanged, this, &MainWindow::writeOpenTabsBreadcrumb);
+    connect(s, &SessionWidget::exitedWithClose, this, [this, s] {
+        m_docs->removeSession(s);
+    });
+    connect(s, &SessionWidget::duplicateRequested, this, [this, s] {
+        openSession(s->conf(), s->displayName(), s->connectionId());
+    });
+    if (!connectionId.isEmpty() && Keyring::enabled()) {
+        const QString account = Keyring::accountFor(connectionId);
+        s->setPasswordLookup([account](const QString &, const QString &, int,
+                                       std::function<void(bool, const QString &)> done) {
+            Keyring::read(account, done);
+        });
+    }
+    m_docs->addSession(s, panel, dockName);
+    if (connectNow)
+        s->connectSession();
+    writeOpenTabsBreadcrumb();
+    return s;
+}
+
+void MainWindow::openSavedSession(const QString &name)
+{
+    bool exists = false;
+    sshlx_conf *c = sshlx_conf_load(name.toUtf8().constData(), &exists);
+    if (!exists) {
+        statusBar()->showMessage(tr("Saved session \"%1\" not found").arg(name), 5000);
+    } else if (!sshlx_conf_launchable(c)) {
+        // Not enough to connect: let the user complete it, as PuTTY does.
+        auto *dlg = new SettingsDialog(c, false, 0, tr("sshLX Configuration"),
+                                       this, true);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        connect(dlg, &SettingsDialog::accepted, this, [this, dlg, name] {
+            openSession(dlg->conf(), name);
+        });
+        connect(dlg, &SettingsDialog::aboutRequested, this, &MainWindow::showAbout);
+        dlg->open();
+        return;
+    } else {
+        openSession(c, name)->setSavedSessionName(name);
+    }
+    sshlx_conf_free(c);
+}
+
+void MainWindow::openConnection(ConnectionNode *n, bool withOptions, const QString &dockName)
+{
+    if (!n || n->isFolder())
+        return;
+    if (!m_store->savedSessions().contains(n->session)) {
+        DialogKit::warning(this, tr("Session not found"),
+                             tr("The PuTTY saved session \"%1\" no longer exists.")
+                                 .arg(n->session));
+        return;
+    }
+    sshlx_conf *c = m_store->effectiveConf(n);
+    const QString name = n->name, id = n->id, panel = n->panel;
+    if (withOptions || !sshlx_conf_launchable(c)) {
+        auto *dlg = new SettingsDialog(c, false, 0, tr("sshLX Configuration - %1").arg(name),
+                                       this, true);
+        dlg->setAttribute(Qt::WA_DeleteOnClose);
+        connect(dlg, &SettingsDialog::aboutRequested, this, &MainWindow::showAbout);
+        connect(dlg, &SettingsDialog::accepted, this, [this, dlg, name, id, panel] {
+            openSession(dlg->conf(), name, id, true, panel);
+        });
+        dlg->open();
+        return;
+    }
+    openSession(c, name, id, true, panel, dockName);
+    sshlx_conf_free(c);
+}
+
+void MainWindow::importPuttySessions()
+{
+    int before = m_store->tree().connections().size();
+    m_store->syncSessions();
+    int added = m_store->tree().connections().size() - before;
+    statusBar()->showMessage(added ? tr("Imported %n PuTTY session(s)", nullptr, added)
+                                   : tr("All PuTTY sessions are already in the tree"),
+                             5000);
+}
+
+// Export: the tree plus the full settings of every referenced PuTTY
+// session, so the file can be imported on another machine.
+void MainWindow::exportTree()
+{
+    QString path = QFileDialog::getSaveFileName(this, tr("Export Connection Tree"),
+                                                "sshlx-connections.json",
+                                                tr("sshLX connections (*.json)"));
+    if (path.isEmpty())
+        return;
+    QJsonObject o = m_store->tree().toJson();
+    QJsonObject sessions;
+    for (ConnectionNode *c : m_store->tree().connections()) {
+        bool exists = false;
+        sshlx_conf *conf = sshlx_conf_load(c->session.toUtf8().constData(), &exists);
+        if (exists) {
+            QJsonObject keys;
+            for (size_t k = 0; k < sshlx_conf_key_count(); k++) {
+                char *v = sshlx_conf_key_export(conf, int(k));
+                keys[QString::fromUtf8(sshlx_conf_key_get(k)->id)] = QString::fromUtf8(v);
+                sshlx_free(v);
+            }
+            sessions[c->session] = keys;
+        }
+        sshlx_conf_free(conf);
+    }
+    o["sessions"] = sessions;
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly)) {
+        DialogKit::error(this, tr("Export failed"), f.errorString());
+        return;
+    }
+    f.write(QJsonDocument(o).toJson(QJsonDocument::Indented));
+    if (!f.commit())
+        DialogKit::error(this, tr("Export failed"), f.errorString());
+}
+
+void MainWindow::importTree()
+{
+    QString path = QFileDialog::getOpenFileName(this, tr("Import Connection Tree"), {},
+                                                tr("sshLX connections (*.json)"));
+    if (path.isEmpty())
+        return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        DialogKit::error(this, tr("Import failed"), f.errorString());
+        return;
+    }
+    QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    ConnectionTree imported;
+    QString err;
+    if (!imported.fromJson(o, &err)) {
+        DialogKit::error(this, tr("Import failed"), err);
+        return;
+    }
+    // Recreate bundled sessions under names that don't clash.
+    QJsonObject sessions = o["sessions"].toObject();
+    for (ConnectionNode *c : imported.connections()) {
+        if (!sessions.contains(c->session))
+            continue;
+        sshlx_conf *conf = sshlx_conf_new_default();
+        QJsonObject keys = sessions[c->session].toObject();
+        for (auto it = keys.begin(); it != keys.end(); ++it) {
+            int k = sshlx_conf_key_find(it.key().toUtf8().constData());
+            if (k >= 0)
+                sshlx_conf_key_import(conf, k, it.value().toString().toUtf8().constData());
+        }
+        QString name = m_store->uniqueSessionName(c->session);
+        char *e = nullptr;
+        sshlx_conf_save(conf, name.toUtf8().constData(), &e);
+        sshlx_free(e);
+        sshlx_conf_free(conf);
+        c->session = name;
+        c->name = name;
+    }
+    // Graft the imported tree under a new folder, with fresh ids.
+    ConnectionNode *dest = m_store->tree().addFolder(
+        nullptr, tr("Imported - %1").arg(QFileInfo(path).completeBaseName()));
+    while (!imported.root()->children.isEmpty()) {
+        ConnectionNode *n = imported.root()->takeChild(0);
+        std::function<void(ConnectionNode *)> fresh = [&](ConnectionNode *x) {
+            x->id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            for (ConnectionNode *c : x->children)
+                fresh(c);
+        };
+        fresh(n);
+        dest->insertChild(-1, n);
+    }
+    m_store->save();
+    emit m_store->structureChanged();
+    m_connections->select(dest);
+}
+
+void MainWindow::newSession()
+{
+    sshlx_conf *c = sshlx_conf_new_default();
+    auto *dlg = new SettingsDialog(c, false, 0, tr("sshLX Configuration"), this, true);
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &SettingsDialog::aboutRequested, this, &MainWindow::showAbout);
+    connect(dlg, &SettingsDialog::accepted, this, [this, dlg] {
+        char *dest = sshlx_conf_dest(dlg->conf());
+        openSession(dlg->conf(), QString::fromUtf8(dest));
+        sshlx_free(dest);
+    });
+    // PuTTY's own dialog can save sessions; pick them up in the tree.
+    connect(dlg, &QDialog::finished, m_store, &ConnectionStore::syncSessions);
+    dlg->open();
+}
+
+void MainWindow::sessionTitleChanged(SessionWidget *s)
+{
+    m_docs->updateTab(s);
+    if (s == current())
+        setWindowTitle(s->title() + " - sshLX");
+}
+
+bool MainWindow::confirmClose(SessionWidget *s)
+{
+    QString warn = s->closeWarning();
+    if (warn.isEmpty())
+        return true;
+    return DialogKit::confirm(this, tr("Close this session?"), warn, tr("Close"),
+                              tr("Cancel"), false, true);
+}
+
+void MainWindow::closeSession(SessionWidget *s)
+{
+    if (!s || !confirmClose(s))
+        return;
+    m_docs->removeSession(s);
+    writeOpenTabsBreadcrumb();
+}
+
+void MainWindow::closeEvent(QCloseEvent *e)
+{
+    int live = 0;
+    for (SessionWidget *s : sessions())
+        if (!s->closeWarning().isEmpty())
+            live++;
+    if (live > 0 &&
+        !DialogKit::confirm(this, tr("Quit sshLX?"),
+                            tr("%n session(s) are still connected and will be closed.",
+                               nullptr, live),
+                            tr("Quit"), tr("Cancel"), false, true)) {
+        e->ignore();
+        return;
+    }
+    saveWindowState();
+    // A clean exit: no crash breadcrumb.
+    QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+                  "/open-tabs.crash");
+    e->accept();
+}
+
+// One line per tab: dock name, kind, reference. Kinds: "connection" (tree
+// id), "session" (PuTTY saved session), "serial" (device path). Ad-hoc
+// quick-connect tabs have no saved settings and are not listed.
+QStringList MainWindow::openTabEntries() const
+{
+    QStringList r;
+    for (SessionWidget *s : m_docs->sessions()) {
+        QString kind, ref;
+        if (!s->connectionId().isEmpty()) {
+            kind = "connection";
+            ref = s->connectionId();
+        } else if (!s->serialByIdPath().isEmpty()) {
+            kind = "serial";
+            ref = s->serialByIdPath();
+        } else if (!s->savedSessionName().isEmpty()) {
+            kind = "session";
+            ref = s->savedSessionName();
+        } else {
+            continue;
+        }
+        r << m_docs->dockName(s) + '\t' + kind + '\t' + ref;
+    }
+    return r;
+}
+
+void MainWindow::saveWindowState()
+{
+    QSettings st;
+    st.setValue("window/geometry", saveGeometry());
+    st.setValue("window/layout2", m_docs->saveLayout());
+    st.setValue("session/openTabs", openTabEntries());
+}
+
+// Keeps the list of open tabs on disk while running, so that after an
+// abnormal exit (a crash takes the whole process; see
+// ARCHITECTURE-NOTES.md section 5) the next start can offer to reopen them.
+void MainWindow::writeOpenTabsBreadcrumb()
+{
+    if (m_restoring)
+        return;
+    QString dir = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+    QDir().mkpath(dir);
+    QSaveFile f(dir + "/open-tabs.crash");
+    if (!f.open(QIODevice::WriteOnly))
+        return;
+    f.write(openTabEntries().join('\n').toUtf8() + "\n");
+    f.commit();
+}
+
+int MainWindow::restoreTabs(const QStringList &entries)
+{
+    int n = 0;
+    m_restoring = true;
+    for (const QString &line : entries) {
+        const QStringList p = line.split('\t');
+        if (p.size() < 3 || p[2].isEmpty())
+            continue;
+        const QString &dock = p[0], &kind = p[1], &ref = p[2];
+        if (kind == "connection") {
+            if (ConnectionNode *node = m_store->tree().findById(ref)) {
+                openConnection(node, false, dock);
+                n++;
+            }
+        } else if (kind == "session") {
+            bool exists = false;
+            sshlx_conf *c = sshlx_conf_load(ref.toUtf8().constData(), &exists);
+            if (exists && sshlx_conf_launchable(c)) {
+                SessionWidget *s = openSession(c, ref, {}, true, {}, dock);
+                s->setSavedSessionName(ref);
+                n++;
+            }
+            sshlx_conf_free(c);
+        } else if (kind == "serial") {
+            SerialPortList::Device d;
+            d.byId = ref.contains("/by-id/") ? ref : QString();
+            d.node = ref;
+            for (const SerialPortList::Device &x : m_serial->ports()->devices())
+                if (x.stablePath() == ref)
+                    d = x;
+            sshlx_conf *c = m_serial->confFor(d);
+            SessionWidget *s = openSession(c, d.product.isEmpty() ? ref : d.product,
+                                           {}, true, {}, dock);
+            s->setSerialByIdPath(ref);
+            sshlx_conf_free(c);
+            n++;
+        }
+    }
+    m_restoring = false;
+    writeOpenTabsBreadcrumb();
+    return n;
+}
+
+void MainWindow::restoreStartupState()
+{
+    QSettings st;
+    restoreGeometry(st.value("window/geometry").toByteArray());
+
+    QString crash = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
+                    "/open-tabs.crash";
+    QStringList entries;
+    QFile cf(crash);
+    if (cf.open(QIODevice::ReadOnly)) {
+        entries = QString::fromUtf8(cf.readAll()).split('\n', Qt::SkipEmptyParts);
+        cf.close();
+        QStringList fatal = entries.filter(QRegularExpression("^fatal\t"));
+        for (const QString &f : fatal)
+            entries.removeAll(f);
+        if (!entries.isEmpty() || !fatal.isEmpty()) {
+            QString msg = tr("sshLX did not shut down cleanly last time.");
+            if (!fatal.isEmpty())
+                msg += "\n\n" + tr("Last error: %1").arg(fatal.last().section('\t', 1));
+            if (!entries.isEmpty()) {
+                msg += "\n\n" + tr("Reopen the %n tab(s) that were open?", nullptr,
+                                     entries.size());
+                if (!DialogKit::confirm(this, tr("Reopen tabs?"), msg, tr("Reopen"),
+                                        tr("Not now"), true))
+                    entries.clear();
+            } else {
+                DialogKit::info(this, tr("Unexpected exit"), msg);
+            }
+        }
+        QFile::remove(crash);
+    } else if (st.value("behaviour/restoreSessions", false).toBool()) {
+        entries = st.value("session/openTabs").toStringList();
+    }
+    if (!entries.isEmpty())
+        restoreTabs(entries);
+    // Default proportions: a ~340 px side column, Connections over Config.
+    applyDefaultSizes();
+    m_defaultLayout = m_dockManager->saveState();
+    // Saved dock layout last, so restored tabs return to their previous
+    // areas. ("layout2": layouts from before the Start page are ignored.)
+    m_docs->restoreLayout(st.value("window/layout2").toByteArray());
+    for (SessionWidget *s : m_docs->sessions())
+        if (ads::CDockWidget *dw = m_docs->dockFor(s))
+            if (dw->isClosed())
+                dw->toggleView(true);
+}
+
+void MainWindow::applyDefaultSizes()
+{
+    ads::CDockAreaWidget *startArea = m_startDock->dockAreaWidget();
+    ads::CDockAreaWidget *connArea = m_connectionsDock->dockAreaWidget();
+    const int side = qBound(280, fontMetrics().horizontalAdvance('M') * 26, 420);
+    const int total = std::max(width(), side * 3);
+    if (startArea)
+        m_dockManager->setSplitterSizes(startArea, {side, total - side});
+    if (connArea) {
+        const int h = std::max(height(), 400);
+        m_dockManager->setSplitterSizes(connArea, {h * 48 / 100, h * 52 / 100});
+    }
+}
+
+void MainWindow::applyTheme()
+{
+    Theme::apply();
+    m_dockManager->setStyleSheet(Theme::dockStyleSheet());
+    m_connectionsDock->setIcon(Icons::get("connections"));
+    m_configDock->setIcon(Icons::get("properties"));
+    m_startDock->setIcon(Icons::get("home"));
+    for (SessionWidget *s : sessions())
+        m_docs->updateTab(s);
+    emit m_store->structureChanged();   // tree icons follow the new palette
+}
+
+void MainWindow::showOptions()
+{
+    OptionsDialog dlg(this);
+    dlg.exec();
+}
+
+void MainWindow::globalEvent(sshlx_global_event ev, const QString &text)
+{
+    switch (ev) {
+    case SSHLX_GLOBAL_NONFATAL:
+    case SSHLX_GLOBAL_OLD_KEYFILE: {
+        DialogKit::notify(this, DialogKit::Kind::Warning, tr("sshLX"), text);
+        break;
+    }
+    case SSHLX_GLOBAL_ABOUT_REQUESTED:
+        showAbout();
+        break;
+    }
+}
+
+void MainWindow::showAbout()
+{
+    char *bi = sshlx_engine_buildinfo();
+    const QString build = QString::fromUtf8(bi);
+    sshlx_free(bi);
+    QFile lic(":/LICENCE");
+    QString licence;
+    if (lic.open(QIODevice::ReadOnly))
+        licence = QString::fromUtf8(lic.readAll());
+
+    QDialog d(this);
+    d.setWindowTitle(tr("About sshLX"));
+    d.setMinimumWidth(520);
+    auto *v = new QVBoxLayout(&d);
+    DialogKit::frame(v);
+    auto *top = new QHBoxLayout;
+    top->setSpacing(18);
+    auto *logo = new QLabel;
+    logo->setPixmap(QApplication::windowIcon().pixmap(80, 80));
+    top->addWidget(logo, 0, Qt::AlignTop);
+    auto *col = new QVBoxLayout;
+    col->setSpacing(6);
+    col->addWidget(DialogKit::header(QStringLiteral("sshLX %1").arg(QApplication::applicationVersion()),
+                                     tr("A tabbed, session-managed terminal client")));
+    auto *text = new QLabel(tr(
+        "<p>Built on the <b>PuTTY %1</b> core: the SSH, Telnet, Rlogin, SUPDUP, Raw "
+        "and serial back ends, terminal emulator, cryptography, configuration and "
+        "session storage are PuTTY's own code.</p>"
+        "<p><b>PuTTY</b> is copyright 1997-2025 Simon Tatham and the PuTTY authors, "
+        "distributed under the MIT licence.</p>"
+        "<p>Qt, Qt Advanced Docking System and QtKeychain are used under their "
+        "licences (LGPL / BSD), linked dynamically.</p>")
+                               .arg(QString::fromUtf8(sshlx_engine_putty_version())));
+    text->setWordWrap(true);
+    text->setTextFormat(Qt::RichText);
+    col->addWidget(text);
+    top->addLayout(col, 1);
+    v->addLayout(top);
+
+    auto *details = new QPlainTextEdit(build + "\n\n" + licence);
+    details->setReadOnly(true);
+    details->setMinimumHeight(200);
+    details->setVisible(false);
+    v->addWidget(details);
+    auto *toggle = new QToolButton;
+    toggle->setText(tr("Build info and PuTTY licence"));
+    toggle->setCheckable(true);
+    connect(toggle, &QToolButton::toggled, &d, [details, &d](bool on) {
+        details->setVisible(on);
+        d.adjustSize();
+    });
+    QPushButton *close = DialogKit::primaryButton(tr("Close"));
+    connect(close, &QPushButton::clicked, &d, &QDialog::accept);
+    v->addWidget(DialogKit::footer({close}, toggle));
+    d.exec();
+}

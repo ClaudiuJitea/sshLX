@@ -1,0 +1,92 @@
+--- ../putty-0.85/unix/serial.c	2026-08-14 07:48:43.000000000 +0200
++++ src/putty-overrides/unix/serial.c	2026-10-28 03:36:20.164787212 +0100
+@@ -1,4 +1,29 @@
+ /*
++ * sshLX OVERRIDE of PuTTY 0.85 unix/serial.c
++ *
++ * Original: putty-0.85/unix/serial.c (PuTTY release 0.85), copied
++ * unchanged except for the changes marked 'sshLX:' below.
++ *
++ * Why: the file-static tree 'serial_by_fd' indexes open serial backends by
++ * fd, but serial_close() sets serial->fd = -1 while the Serial is still in
++ * the tree, and nothing ever removes it, so serial_free() frees a struct
++ * that stays linked into the tree. PuTTY runs one session per process, so
++ * this goes unnoticed there; with several serial sessions in one process
++ * (sshLX tabs), closing one corrupts the shared index and lookups for the
++ * remaining sessions fail, so their input is never read. The fix removes
++ * the Serial from the index before its fd is invalidated.
++ *
++ * Also: read errors (other than EAGAIN) and write errors on the port call
++ * perror() + exit(1), which in PuTTY closes the one session but in sshLX
++ * would close every tab (e.g. typing into a tab whose USB adapter was just
++ * pulled gives EIO). They now end only this session, via
++ * seat_connection_fatal() with the errno text. And serial_uxsel_setup()
++ * returns early once the port is closed, instead of reaching uxsel_set()
++ * with fd -1 (an assertion failure) from a late unthrottle.
++ *
++ * See sshLX/PUTTY-OVERRIDES.md and sshLX/docs/overrides/unix-serial.c.diff.
++ */
++/*
+  * Serial back end (Unix-specific).
+  */
+ 
+@@ -337,6 +362,8 @@
+ static void serial_close(Serial *serial)
+ {
+     if (serial->fd >= 0) {
++        /* sshLX: keep the fd index consistent; see header comment. */
++        del234(serial_by_fd, serial);
+         uxsel_del(serial->fd);
+         close(serial->fd);
+         serial->fd = -1;
+@@ -368,6 +395,16 @@
+     }
+ }
+ 
++/* sshLX: end this session (not the whole process) on an I/O error;
++ * see header comment. */
++static void serial_io_error(Serial *serial, const char *what, int err)
++{
++    serial_close(serial);
++    serial->finished = true;
++    seat_connection_fatal(serial->seat, "%s serial port: %s", what,
++                          strerror(err));
++}
++
+ static void serial_select_result(int fd, int event)
+ {
+     Serial *serial;
+@@ -399,8 +436,9 @@
+             if (errno == EWOULDBLOCK)
+                 return;        /* spurious */
+ #endif
+-            perror("read serial port");
+-            exit(1);
++            /* sshLX: was perror() + exit(1); see header comment. */
++            serial_io_error(serial, "Reading", errno);
++            return;
+         } else if (ret > 0) {
+             serial->inbufsize = seat_stdout(serial->seat, buf, ret);
+             serial_uxsel_setup(serial); /* might acquire backlog and freeze */
+@@ -425,6 +463,9 @@
+ {
+     int rwx = 0;
+ 
++    if (serial->fd < 0)
++        return;   /* sshLX: already closed; uxsel_set() asserts fd >= 0 */
++
+     if (serial->inbufsize <= SERIAL_MAX_BACKLOG)
+         rwx |= SELECT_R;
+     if (bufchain_size(&serial->output_data))
+@@ -449,8 +490,9 @@
+             break;
+         }
+         if (ret < 0) {
+-            perror("write serial port");
+-            exit(1);
++            /* sshLX: was perror() + exit(1); see header comment. */
++            serial_io_error(serial, "Writing", errno);
++            return;
+         }
+         bufchain_consume(&serial->output_data, ret);
+     }

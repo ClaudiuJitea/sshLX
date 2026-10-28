@@ -1,0 +1,69 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+  <file>icons/check-white.svg</file>
+  <file>icons/chevron-down.svg</file>
+  <file>icons/chevron-up.svg</file>
+  <file>icons/close.svg</file>
+  <file>icons/collapse-all.svg</file>
+  <file>icons/connection-new.svg</file>
+  <file>icons/connections.svg</file>
+  <file>icons/copy.svg</file>
+  <file>icons/detach.svg</file>
+  <file>icons/disconnect.svg</file>
+  <file>icons/disconnected.svg</file>
+  <file>icons/event-log.svg</file>
+  <file>icons/expand-all.svg</file>
+  <file>icons/export.svg</file>
+  <file>icons/float.svg</file>
+  <file>icons/folder-new.svg</file>
+  <file>icons/folder.svg</file>
+  <file>icons/fullscreen.svg</file>
+  <file>icons/home.svg</file>
+  <file>icons/import.svg</file>
+  <file>icons/info.svg</file>
+  <file>icons/keyboard.svg</file>
+  <file>icons/lock.svg</file>
+  <file>icons/maximize.svg</file>
+  <file>icons/msg-error.svg</file>
+  <file>icons/msg-info.svg</file>
+  <file>icons/msg-question.svg</file>
+  <file>icons/msg-warning.svg</file>
+  <file>icons/os-linux.svg</file>
+  <file>icons/os-network.svg</file>
+  <file>icons/os-windows.svg</file>
+  <file>icons/palette.svg</file>
+  <file>icons/paste.svg</file>
+  <file>icons/properties.svg</file>
+  <file>icons/proto-raw.svg</file>
+  <file>icons/proto-rlogin.svg</file>
+  <file>icons/proto-serial.svg</file>
+  <file>icons/proto-ssh-connection.svg</file>
+  <file>icons/proto-ssh.svg</file>
+  <file>icons/proto-supdup.svg</file>
+  <file>icons/proto-telnet.svg</file>
+  <file>icons/quick-connect.svg</file>
+  <file>icons/quit.svg</file>
+  <file>icons/radio-dot.svg</file>
+  <file>icons/reconnect.svg</file>
+  <file>icons/restore.svg</file>
+  <file>icons/save.svg</file>
+  <file>icons/search.svg</file>
+  <file>icons/settings.svg</file>
+  <file>icons/sort-az.svg</file>
+  <file>icons/split-down.svg</file>
+  <file>icons/split-right.svg</file>
+  <file>icons/star.svg</file>
+  <file>icons/terminal.svg</file>
+  <file>icons/usb.svg</file>
+  <file alias="app/sshlx-16.png">appicon/sshlx-16.png</file>
+  <file alias="app/sshlx-22.png">appicon/sshlx-22.png</file>
+  <file alias="app/sshlx-24.png">appicon/sshlx-24.png</file>
+  <file alias="app/sshlx-32.png">appicon/sshlx-32.png</file>
+  <file alias="app/sshlx-48.png">appicon/sshlx-48.png</file>
+  <file alias="app/sshlx-64.png">appicon/sshlx-64.png</file>
+  <file alias="app/sshlx-128.png">appicon/sshlx-128.png</file>
+  <file alias="app/sshlx-256.png">appicon/sshlx-256.png</file>
+  <file alias="app/sshlx-512.png">appicon/sshlx-512.png</file>
+  <file alias="LICENCE">../third_party/putty/LICENCE</file>
+</qresource>
+</RCC>
