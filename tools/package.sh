@@ -91,7 +91,14 @@ LIBDIR="$(find "$APPDIR/usr" -type d -name sshlx -path '*/lib*' | head -n1)"
     export QMAKE APPIMAGE_EXTRACT_AND_RUN=1 NO_STRIP=1
     export LD_LIBRARY_PATH="$LIBDIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
     export EXTRA_QT_MODULES="waylandclient;dbus"
-    export EXTRA_PLATFORM_PLUGINS="libqwayland-egl.so;libqwayland-generic.so"
+    # Wayland platform plugin(s): one libqwayland.so since Qt 6.10, separate
+    # -egl/-generic plugins before. Bundle whichever this Qt has.
+    PLUGINS="$("$QMAKE" -query QT_INSTALL_PLUGINS)/platforms"
+    wl=""
+    for p in libqwayland.so libqwayland-egl.so libqwayland-generic.so; do
+        [ -e "$PLUGINS/$p" ] && wl="${wl:+$wl;}$p"
+    done
+    export EXTRA_PLATFORM_PLUGINS="$wl"
     export LDAI_OUTPUT="$DIST/sshLX-$VERSION-$ARCH_AI.AppImage"
     "$TOOLS/linuxdeploy-$ARCH_AI.AppImage" --appimage-extract-and-run \
         --appdir "$APPDIR" \
