@@ -216,6 +216,16 @@ QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: %chevronup%; width: 12px; 
 QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: %chevron%; width: 12px; height: 12px; }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover, QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover { background: %hover%; border-radius: 4px; }
 
+QLabel#StartMuted { color: %muted%; }
+QPushButton#StartAction { background: %card%; border: 1px solid %border%; border-radius: 10px; padding: 0;
+    text-align: left; min-height: 66px; }
+QPushButton#StartAction:hover { background: %buttonhover%; border-color: %accent%; }
+QPushButton#StartAction:pressed { background: %selection%; }
+QLabel#StartActionIcon { background: %hover%; border-radius: 9px; }
+QLabel#StartActionTitle { color: %text%; font-weight: 600; }
+QLabel#Keycap { background: %button%; color: %text%; border: 1px solid %borderstrong%;
+    border-bottom-width: 2px; border-radius: 5px; padding: 1px 7px; }
+
 QFrame#PromptBar, QFrame#DeviceBanner, QFrame#ReconnectBar {
     background: %menu%; border: 1px solid %border%; border-radius: 8px; margin: 4px; }
 )";

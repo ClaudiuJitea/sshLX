@@ -737,6 +737,8 @@ void MainWindow::showOptions()
 {
     OptionsDialog dlg(this);
     dlg.exec();
+    if (auto *start = qobject_cast<StartPage *>(m_startDock->widget()))
+        start->refreshShortcuts();
 }
 
 void MainWindow::globalEvent(sshlx_global_event ev, const QString &text)
