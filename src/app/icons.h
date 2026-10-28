@@ -13,4 +13,13 @@ QString path(const QString &name);
 void clearCache();   // after a palette change
 // The application icon, with every bundled size.
 QIcon app();
+
+// Icons a connection or folder can show in the tree (property "Icon").
+// key is what connections.json stores; "" means the protocol's icon.
+struct NodeIcon {
+    QString key;
+    QString label;
+};
+const QList<NodeIcon> &nodeIcons();
+QIcon forNode(const QString &key);   // null for "" or an unknown key
 } // namespace Icons

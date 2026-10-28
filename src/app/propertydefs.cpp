@@ -1,5 +1,7 @@
 #include "propertydefs.h"
 
+#include "icons.h"
+
 #include <QCoreApplication>
 #include <QSet>
 
@@ -57,9 +59,12 @@ static QList<PropertyDef> buildCurated()
              "the PuTTY saved session that stores its settings.");
     l << def("Display", "Description", "@description", K::Text,
              "Free-text description, shown as a tooltip in the tree.");
+    QList<QPair<int, QString>> icons;
+    for (int i = 0; i < Icons::nodeIcons().size(); i++)
+        icons.append({i, Icons::nodeIcons()[i].label});
     l << def("Display", "Icon", "@icon", K::Enum,
-             "Icon shown in the connection tree.",
-             {{0, tr("(protocol)")}, {1, "Linux"}, {2, "Windows"}, {3, tr("Network device")}});
+             "Icon shown in the connection tree for this connection or folder. "
+             "(protocol) uses the protocol's icon, or the folder icon for folders.", icons);
     l << def("Display", "Panel", "@panel", K::Text,
              "Name of the dock area this connection opens in. Leave empty to open "
              "next to the current tab.");

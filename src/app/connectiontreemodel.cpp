@@ -132,9 +132,7 @@ int ConnectionTreeModel::columnCount(const QModelIndex &) const
 
 QIcon ConnectionTreeModel::iconFor(const QString &iconName)
 {
-    if (iconName.isEmpty())
-        return {};
-    return Icons::get("os-" + iconName);
+    return Icons::forNode(iconName);
 }
 
 QVariant ConnectionTreeModel::data(const QModelIndex &idx, int role) const

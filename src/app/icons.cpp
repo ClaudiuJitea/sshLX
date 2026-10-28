@@ -60,6 +60,45 @@ QString path(const QString &name)
     return out;
 }
 
+const QList<NodeIcon> &nodeIcons()
+{
+    // The first four keys predate the larger set; keep them stable.
+    static const QList<NodeIcon> list{
+        {"", QApplication::translate("Icons", "(protocol)")},
+        {"linux", "Linux"},
+        {"windows", "Windows"},
+        {"network", QApplication::translate("Icons", "Network device")},
+        {"folder", QApplication::translate("Icons", "Folder")},
+        {"server", QApplication::translate("Icons", "Server")},
+        {"database", QApplication::translate("Icons", "Database")},
+        {"storage", QApplication::translate("Icons", "Storage / NAS")},
+        {"cloud", QApplication::translate("Icons", "Cloud")},
+        {"web", QApplication::translate("Icons", "Web")},
+        {"container", QApplication::translate("Icons", "Container")},
+        {"cluster", QApplication::translate("Icons", "Cluster")},
+        {"router", QApplication::translate("Icons", "Router / Wi-Fi")},
+        {"firewall", QApplication::translate("Icons", "Firewall")},
+        {"shield", QApplication::translate("Icons", "Security")},
+        {"key", QApplication::translate("Icons", "Jump host / bastion")},
+        {"terminal", QApplication::translate("Icons", "Terminal")},
+        {"desktop", QApplication::translate("Icons", "Workstation")},
+        {"laptop", QApplication::translate("Icons", "Laptop")},
+        {"embedded", QApplication::translate("Icons", "Embedded / IoT")},
+        {"lab", QApplication::translate("Icons", "Lab")},
+        {"home", QApplication::translate("Icons", "Home")},
+        {"office", QApplication::translate("Icons", "Office / site")},
+    };
+    return list;
+}
+
+QIcon forNode(const QString &key)
+{
+    for (const NodeIcon &n : nodeIcons())
+        if (!key.isEmpty() && n.key == key)
+            return get("grp-" + key);
+    return {};
+}
+
 QIcon get(const QString &name)
 {
     auto it = cache().find(name);

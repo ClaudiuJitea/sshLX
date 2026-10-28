@@ -24,6 +24,8 @@
 #include <DockManager.h>
 #include <DockWidget.h>
 #include <QTreeWidget>
+#include <QComboBox>
+#include <QGridLayout>
 #include <QtTest>
 
 #include <arpa/inet.h>
@@ -163,6 +165,17 @@ private slots:
         ConnectionNode *win = w->store()->newFolder(nullptr, "Windows");
         win->icon = "windows";
         w->store()->newConnection(win, "jump-host");
+        QList<ConnectionNode *> extra;
+        for (auto [name, icon, child, childIcon] :
+             {std::tuple{"Datacenter", "server", "db-cluster", "database"},
+              std::tuple{"Network", "router", "core-switch", "network"},
+              std::tuple{"Cloud", "cloud", "k8s-prod", "cluster"},
+              std::tuple{"Lab", "lab", "pi-sensor", "embedded"}}) {
+            ConnectionNode *f = w->store()->newFolder(nullptr, name);
+            f->icon = icon;
+            w->store()->newConnection(f, child)->icon = childIcon;
+            extra << f;
+        }
         w->resize(1280, 760);
         w->show();
         w->restoreStartupState();
@@ -181,6 +194,41 @@ private slots:
         QTest::qWait(300);
         file->grab().save(dir + "/sshlx-menu.png");
         file->close();
+
+        // Every tree icon, as a gallery and as the property grid's drop-down.
+        {
+            QWidget g;
+            g.setAutoFillBackground(true);
+            auto *grid = new QGridLayout(&g);
+            grid->setContentsMargins(16, 16, 16, 16);
+            grid->setHorizontalSpacing(18);
+            const auto &icons = Icons::nodeIcons();
+            for (int i = 1; i < icons.size(); i++) {
+                auto *big = new QLabel;
+                big->setPixmap(Icons::forNode(icons[i].key).pixmap(32, 32));
+                auto *small = new QLabel;
+                small->setPixmap(Icons::forNode(icons[i].key).pixmap(16, 16));
+                int r = (i - 1) % 8, c = (i - 1) / 8 * 3;
+                grid->addWidget(big, r, c);
+                grid->addWidget(small, r, c + 1);
+                grid->addWidget(new QLabel(icons[i].label), r, c + 2);
+            }
+            g.show();
+            QTest::qWait(200);
+            g.grab().save(dir + "/icons-gallery.png");
+            QComboBox cb;
+            QPixmap blank(16, 16);
+            blank.fill(Qt::transparent);
+            for (const auto &n : icons)
+                cb.addItem(n.key.isEmpty() ? QIcon(blank) : Icons::forNode(n.key), n.label);
+            cb.setMaxVisibleItems(16);
+            cb.show();
+            cb.showPopup();
+            QTest::qWait(300);
+            if (QWidget *popup = cb.view()->window())
+                popup->grab().save(dir + "/icons-dropdown.png");
+            cb.hidePopup();
+        }
 
         auto grabModal = [dir](const QString &name) {
             QTimer::singleShot(400, [dir, name] {
@@ -215,6 +263,8 @@ private slots:
         w->showAbout();
         w->store()->remove(lin);
         w->store()->remove(win);
+        for (ConnectionNode *f : extra)
+            w->store()->remove(f);
         delete w;
     }
 
@@ -818,7 +868,9 @@ private slots:
             st->newConnection(prod, "web-01");
             st->newConnection(prod, "db-01");
             st->newConnection(prod, "backup-01");
+            prod->icon = "server";
             ConnectionNode *lab = st->newFolder(nullptr, "Lab");
+            lab->icon = "lab";
             st->newConnection(lab, "edge-gw");
             st->newConnection(lab, "jump-host");
             m_main->connectionsPanel()->select(st->tree().findBySession("web-01"));

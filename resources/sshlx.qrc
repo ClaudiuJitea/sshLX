@@ -1,5 +1,27 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/">
+  <file>icons/grp-cloud.svg</file>
+  <file>icons/grp-cluster.svg</file>
+  <file>icons/grp-container.svg</file>
+  <file>icons/grp-database.svg</file>
+  <file>icons/grp-desktop.svg</file>
+  <file>icons/grp-embedded.svg</file>
+  <file>icons/grp-firewall.svg</file>
+  <file>icons/grp-folder.svg</file>
+  <file>icons/grp-home.svg</file>
+  <file>icons/grp-key.svg</file>
+  <file>icons/grp-lab.svg</file>
+  <file>icons/grp-laptop.svg</file>
+  <file>icons/grp-linux.svg</file>
+  <file>icons/grp-network.svg</file>
+  <file>icons/grp-office.svg</file>
+  <file>icons/grp-router.svg</file>
+  <file>icons/grp-server.svg</file>
+  <file>icons/grp-shield.svg</file>
+  <file>icons/grp-storage.svg</file>
+  <file>icons/grp-terminal.svg</file>
+  <file>icons/grp-web.svg</file>
+  <file>icons/grp-windows.svg</file>
   <file>icons/check-white.svg</file>
   <file>icons/chevron-down.svg</file>
   <file>icons/chevron-up.svg</file>
@@ -28,9 +50,6 @@
   <file>icons/msg-info.svg</file>
   <file>icons/msg-question.svg</file>
   <file>icons/msg-warning.svg</file>
-  <file>icons/os-linux.svg</file>
-  <file>icons/os-network.svg</file>
-  <file>icons/os-windows.svg</file>
   <file>icons/palette.svg</file>
   <file>icons/paste.svg</file>
   <file>icons/properties.svg</file>

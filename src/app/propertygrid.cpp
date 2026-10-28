@@ -27,7 +27,6 @@
 #include "settingsdialog.h"
 
 enum { DefRole = Qt::UserRole + 10 };
-static const char *kIconNames[] = {"", "linux", "windows", "network"};
 
 static int key(const PropertyDef &d)
 {
@@ -62,8 +61,20 @@ public:
         }
         case PropertyDef::Enum: {
             auto *cb = new QComboBox(parent);
-            for (const auto &e : d->enumValues)
-                cb->addItem(e.second, e.first);
+            for (const auto &e : d->enumValues) {
+                if (d->key == "@icon") {
+                    QIcon ic = Icons::forNode(Icons::nodeIcons().value(e.first).key);
+                    if (ic.isNull()) {   // keep labels aligned
+                        QPixmap blank(16, 16);
+                        blank.fill(Qt::transparent);
+                        ic = QIcon(blank);
+                    }
+                    cb->addItem(ic, e.second, e.first);
+                }
+                else
+                    cb->addItem(e.second, e.first);
+            }
+            cb->setMaxVisibleItems(16);
             return cb;
         }
         case PropertyDef::Bool:
@@ -370,8 +381,9 @@ QVariant PropertyGrid::editValue(const PropertyDef &d) const
     if (d.key == "@favourite") return m_node->favourite;
     if (d.key == "@password") return QString();   // never read back into the UI
     if (d.key == "@icon") {
-        for (int i = 0; i < 4; i++)
-            if (m_node->icon == kIconNames[i])
+        const auto &icons = Icons::nodeIcons();
+        for (int i = 0; i < icons.size(); i++)
+            if (m_node->icon == icons[i].key)
                 return i;
         return 0;
     }
@@ -554,6 +566,8 @@ void PropertyGrid::refreshValues()
             } else {
                 val->setText(displayValue(*d));
             }
+            if (d->key == "@icon")
+                val->setIcon(Icons::forNode(m_node ? m_node->icon : QString()));
             if (d->kind == PropertyDef::Colour) {
                 QPixmap px(12, 12);
                 px.fill(QColor(editValue(*d).toString()));
@@ -615,7 +629,8 @@ void PropertyGrid::applyValue(const PropertyDef &d, const QVariant &v)
             if (d.key == "@description") m_node->description = v.toString();
             else if (d.key == "@panel") m_node->panel = v.toString();
             else if (d.key == "@favourite") m_node->favourite = v.toBool();
-            else if (d.key == "@icon") m_node->icon = kIconNames[qBound(0, v.toInt(), 3)];
+            else if (d.key == "@icon")
+                m_node->icon = Icons::nodeIcons().value(v.toInt()).key;
             m_store->touch(m_node);
         }
         m_updating = false;

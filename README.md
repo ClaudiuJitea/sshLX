@@ -15,7 +15,8 @@
 
 ## Features
 
-- **Connection tree:** folders, icons, favourites, search and drag & drop. Your existing PuTTY sessions appear automatically.
+- **Connection tree:** folders, favourites, search and drag & drop. Your existing PuTTY sessions appear automatically.
+- **Group icons:** 22 line icons that follow the dark and light themes, for folders and connections (servers, databases, cloud, network gear, containers, lab, sites and more).
 - **Property grid** to edit connections and folders, with **folder inheritance** (set a username or proxy once per folder).
 - **Dockable, splittable tabs:** side by side, stacked or floating. The layout and open tabs are restored on the next start.
 - **Every PuTTY option** stays available, through PuTTY's complete settings dialog.
@@ -33,14 +34,16 @@
 |---|---|
 | ![Options](docs/images/options.png) | ![Session settings](docs/images/session-settings.png) |
 
+<p align="center"><img src="docs/images/icons.png" alt="Group icons" width="560"></p>
+
 ## Install
 
-Download the packages from the [v0.1 release](https://github.com/ClaudiuJitea/sshLX/releases/tag/v0.1).
+Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.1.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.2.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.1.0-x86_64.AppImage && ./sshLX-0.1.0-x86_64.AppImage
+chmod +x sshLX-0.2.0-x86_64.AppImage && ./sshLX-0.2.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
