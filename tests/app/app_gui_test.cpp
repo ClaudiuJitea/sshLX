@@ -255,6 +255,27 @@ private slots:
             sd.grab().save(dir + "/dlg-settings.png");
             sshlx_conf_free(c);
         }
+        // Session tabs: connected, disconnected, and the dock tabs beside them.
+        {
+            Pty pty;
+            QVERIFY(pty.open());
+            sshlx_conf *c = serialConf(pty.name);
+            SessionWidget *live = w->openSession(c, "web-01");
+            sshlx_conf_free(c);
+            c = serialConf(m_tmp.filePath("no-such-tty"));
+            SessionWidget *dead = w->openSession(c, "/dev/ttyS4");
+            sshlx_conf_free(c);
+            QTRY_COMPARE(live->state(), SSHLX_STATE_CONNECTED);
+            QTRY_COMPARE(dead->state(), SSHLX_STATE_DISCONNECTED);
+            w->documents()->activate(dead);
+            QTest::qWait(300);
+            w->grab().save(dir + "/sshlx-tabs.png");
+            w->documents()->activate(live);
+            QTest::qWait(200);
+            w->grab().save(dir + "/sshlx-tabs-live.png");
+            for (SessionWidget *x : w->sessions())
+                w->documents()->removeSession(x);
+        }
         grabModal("dlg-confirm.png");
         DialogKit::confirm(w, "Close this session?",
                            "Are you sure you want to close this session?", "Close",

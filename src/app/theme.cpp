@@ -47,6 +47,7 @@ struct Colors {
         text, muted, disabled, hover, hoverSoft, selection, selectedText, accent,
         scroll, scrollHover, tabActive, tooltip;
     QString card, navBg, accentHover, accentPressed;
+    QString tabBar;   // dock title bars, behind the tabs
 };
 
 const Colors &dark()
@@ -56,7 +57,8 @@ const Colors &dark()
         "#3d4045", "#55595f", "#dfe1e5", "#9a9ea6", "#6c7078", "#3a3d42",
         "#303236", "#2f4a77", "#ffffff", "#4a8af4", "#4a4d53", "#5d6168",
         "#1f2023", "#2f3134",
-        "#303236", "#26282b", "#5b97f6", "#3b74d9"};
+        "#303236", "#26282b", "#5b97f6", "#3b74d9",
+        "#222326"};
     return c;
 }
 
@@ -67,7 +69,8 @@ const Colors &light()
         "#d5d8de", "#b8bdc6", "#1f2328", "#5f6670", "#a4a9b1", "#e6e9ee",
         "#eef0f3", "#d3e3fd", "#0b1f3a", "#2f6fe4", "#c4c8cf", "#a8adb6",
         "#ffffff", "#ffffff",
-        "#ffffff", "#eceef2", "#4482ec", "#255fcc"};
+        "#ffffff", "#eceef2", "#4482ec", "#255fcc",
+        "#e4e7eb"};
     return c;
 }
 
@@ -87,7 +90,7 @@ QString fill(QString qss, const Colors &c)
         {"selectedtext", c.selectedText}, {"accent", c.accent}, {"scroll", c.scroll},
         {"scrollhover", c.scrollHover}, {"tabactive", c.tabActive}, {"tooltip", c.tooltip},
         {"card", c.card}, {"navbg", c.navBg}, {"accenthover", c.accentHover},
-        {"accentpressed", c.accentPressed}};
+        {"accentpressed", c.accentPressed}, {"tabbar", c.tabBar}};
     for (auto it = map.begin(); it != map.end(); ++it)
         qss.replace('%' + it.key() + '%', it.value());
     return qss;
@@ -219,19 +222,24 @@ ads--CDockContainerWidget { background: %window%; }
 ads--CDockContainerWidget > QSplitter { padding: 0; }
 ads--CDockContainerWidget ads--CDockSplitter::handle { background: %border%; }
 ads--CDockAreaWidget { background: %window%; }
-ads--CDockAreaTitleBar { background: %window%; border-bottom: 1px solid %border%; min-height: 34px; }
-ads--CDockAreaWidget[focused="true"] ads--CDockAreaTitleBar { border-bottom: 1px solid %accent%; }
+ads--CDockAreaTitleBar { background: %tabbar%; border: none; min-height: 36px; padding-left: 4px; }
 
-ads--CDockWidgetTab { background: transparent; border: none; border-top: 2px solid transparent; padding: 0 4px 0 10px; min-height: 30px; }
+/* Tabs: rounded on top, on a darker bar; the current one takes the
+   content's colour so it reads as part of it, and the focused one also
+   gets an accent cap. */
+ads--CDockWidgetTab { background: transparent; border: none; border-top: 2px solid transparent;
+    border-top-left-radius: 7px; border-top-right-radius: 7px;
+    margin: 5px 1px 0 1px; padding: 0 2px 0 10px; min-height: 28px; }
 ads--CDockWidgetTab:hover { background: %hoversoft%; }
-ads--CDockWidgetTab QLabel { color: %muted%; padding: 0 2px; }
-ads--CDockWidgetTab[activeTab="true"] { background: %tabactive%; border-top: 2px solid %borderstrong%; }
+ads--CDockWidgetTab QLabel { color: %muted%; padding: 0 4px 0 2px; }
+ads--CDockWidgetTab:hover QLabel { color: %text%; }
+ads--CDockWidgetTab[activeTab="true"] { background: %window%; }
 ads--CDockWidgetTab[activeTab="true"] QLabel { color: %text%; }
-ads--CDockWidgetTab[focused="true"] { background: %tabactive%; border-top: 2px solid %accent%; }
+ads--CDockWidgetTab[focused="true"] { background: %window%; border-top: 2px solid %accent%; }
 ads--CDockWidgetTab[focused="true"] QLabel { color: %text%; }
 
-#tabCloseButton { background: none; border: none; border-radius: 4px; margin: 0 2px; padding: 2px;
-    qproperty-icon: %close%; qproperty-iconSize: 14px; }
+#tabCloseButton { background: none; border: none; border-radius: 5px; margin: 0 2px; padding: 3px;
+    qproperty-icon: %close%; qproperty-iconSize: 12px; }
 #tabCloseButton:hover { background: %hover%; }
 #tabCloseButton:pressed { background: %selection%; }
 
