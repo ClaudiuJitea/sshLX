@@ -4,13 +4,24 @@
 #include <QEvent>
 #include <QGridLayout>
 #include <QHBoxLayout>
-#include <QKeySequence>
 #include <QLabel>
 #include <QPushButton>
 #include <QVBoxLayout>
 
 #include "icons.h"
-#include "shortcuts.h"
+
+// A small upper-case section heading, left-aligned with its content.
+static QLabel *sectionLabel(const QString &text)
+{
+    auto *l = new QLabel(text.toUpper());
+    l->setObjectName("StartSection");
+    QFont f = l->font();
+    f.setPointSizeF(f.pointSizeF() * 0.85);
+    f.setWeight(QFont::DemiBold);
+    f.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
+    l->setFont(f);
+    return l;
+}
 
 StartPage::StartPage(QWidget *parent) : QWidget(parent)
 {
@@ -21,16 +32,17 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
     m_logo = new QLabel;
     m_logo->setAlignment(Qt::AlignCenter);
     outer->addWidget(m_logo);
-    outer->addSpacing(10);
+    outer->addSpacing(14);
 
     auto *title = new QLabel(QStringLiteral("sshLX"));
     title->setObjectName("StartTitle");
     QFont tf = title->font();
-    tf.setPointSizeF(tf.pointSizeF() * 2.2);
-    tf.setBold(true);
+    tf.setPointSizeF(tf.pointSizeF() * 1.9);
+    tf.setWeight(QFont::DemiBold);
     title->setFont(tf);
     title->setAlignment(Qt::AlignCenter);
     outer->addWidget(title);
+    outer->addSpacing(2);
 
     auto *sub = new QLabel(tr("SSH, Telnet, Rlogin, SUPDUP, Raw and serial sessions "
                               "on the PuTTY core"));
@@ -38,9 +50,16 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
     sub->setAlignment(Qt::AlignCenter);
     sub->setWordWrap(true);
     outer->addWidget(sub);
-    outer->addSpacing(28);
+    outer->addSpacing(36);
 
-    // Action cards: icon tile, title, one-line description.
+    // One column, as wide as the two cards: section heading, cards, then
+    // the shortcut list, all left-aligned to the same edge.
+    auto *column = new QVBoxLayout;
+    column->setSpacing(0);
+    column->addWidget(sectionLabel(tr("Get started")));
+    column->addSpacing(10);
+
+    // Action cards: monochrome icon, title, one-line description.
     QList<QPushButton *> cards;
     auto *grid = new QGridLayout;
     grid->setHorizontalSpacing(12);
@@ -53,16 +72,16 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
         b->setAccessibleName(text);
         b->setAccessibleDescription(hint);
         auto *h = new QHBoxLayout(b);
-        h->setContentsMargins(14, 10, 16, 10);
-        h->setSpacing(12);
+        h->setContentsMargins(16, 12, 16, 12);
+        h->setSpacing(14);
         auto *tile = new QLabel;
         tile->setObjectName("StartActionIcon");
-        tile->setFixedSize(38, 38);
+        tile->setFixedSize(36, 36);
         tile->setAlignment(Qt::AlignCenter);
         m_icons.append({tile, icon});
         h->addWidget(tile);
         auto *texts = new QVBoxLayout;
-        texts->setSpacing(1);
+        texts->setSpacing(2);
         auto *t = new QLabel(text);
         t->setObjectName("StartActionTitle");
         auto *d = new QLabel(hint);
@@ -79,13 +98,13 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
         grid->addWidget(b, row, col);
         cards << b;
     };
-    card("connection-new", tr("New connection"), tr("Add a connection to the tree"),
+    card("start-new", tr("New connection"), tr("Add a connection to the tree"),
          &StartPage::newConnection, 0, 0);
-    card("quick-connect", tr("Quick connect"), tr("PuTTY's dialog, without saving"),
+    card("start-quick", tr("Quick connect"), tr("PuTTY's dialog, without saving"),
          &StartPage::quickConnect, 0, 1);
-    card("import", tr("Import PuTTY sessions"), tr("Bring saved sessions into the tree"),
+    card("start-import", tr("Import PuTTY sessions"), tr("Bring saved sessions into the tree"),
          &StartPage::importSessions, 1, 0);
-    card("settings", tr("Options"), tr("Theme, shortcuts, serial, passwords"),
+    card("start-options", tr("Options"), tr("Theme, shortcuts, serial, passwords"),
          &StartPage::options, 1, 1);
     // A button's size hint ignores the layout inside it: size the cards to
     // the widest content, all the same width.
@@ -94,27 +113,25 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
         width = qMax(width, b->layout()->sizeHint().width());
     for (QPushButton *b : cards)
         b->setMinimumWidth(width);
+    column->addLayout(grid);
+    column->addSpacing(32);
+
+    column->addWidget(sectionLabel(tr("Recent connections")));
+    column->addSpacing(8);
+    m_recent = new QVBoxLayout;
+    m_recent->setSpacing(2);
+    column->addLayout(m_recent);
+    setRecent({});
+
     auto *row = new QHBoxLayout;
     row->addStretch(1);
-    row->addLayout(grid);
+    auto *columnBox = new QWidget;
+    columnBox->setLayout(column);
+    columnBox->setFixedWidth(2 * width + grid->horizontalSpacing());
+    column->setContentsMargins(0, 0, 0, 0);
+    row->addWidget(columnBox);
     row->addStretch(1);
     outer->addLayout(row);
-    outer->addSpacing(28);
-
-    auto *keysRow = new QHBoxLayout;
-    keysRow->addStretch(1);
-    m_keys = new QHBoxLayout;
-    m_keys->setSpacing(4);
-    keysRow->addLayout(m_keys);
-    keysRow->addStretch(1);
-    outer->addLayout(keysRow);
-    outer->addSpacing(10);
-
-    auto *hint = new QLabel(tr("Double-click a connection to open it  ·  "
-                               "drag tabs to split the view"));
-    hint->setObjectName("StartMuted");
-    hint->setAlignment(Qt::AlignCenter);
-    outer->addWidget(hint);
     outer->addStretch(3);
 
     refreshIcons();
@@ -122,56 +139,52 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
 
 void StartPage::refreshIcons()
 {
-    m_logo->setPixmap(QApplication::windowIcon().pixmap(88, 88));
+    m_logo->setPixmap(QApplication::windowIcon().pixmap(72, 72));
     for (const auto &[label, name] : m_icons)
-        label->setPixmap(Icons::get(name).pixmap(22, 22));
+        label->setPixmap(Icons::get(name).pixmap(20, 20));
 }
 
-void StartPage::refreshShortcuts()
+void StartPage::setRecent(const QList<Recent> &recent)
 {
-    while (QLayoutItem *it = m_keys->takeAt(0)) {
+    while (QLayoutItem *it = m_recent->takeAt(0)) {
         delete it->widget();
         delete it;
     }
-    const struct { const char *id; QString label; } shown[] = {
-        {"tabs.next", tr("next tab")},
-        {"tabs.close", tr("close tab")},
-        {"tools.sendNext", tr("send next key to the terminal")},
-    };
-    bool first = true;
-    for (const auto &s : shown) {
-        QKeySequence seq;
-        for (const Shortcuts::Entry &e : Shortcuts::instance().entries())
-            if (e.id == QLatin1String(s.id))
-                seq = e.seq;
-        if (seq.isEmpty())
-            continue;   // cleared in Options: nothing to show
-        if (!first)
-            m_keys->addSpacing(18);
-        first = false;
-        // "Ctrl+Shift+W" -> [Ctrl] [Shift] [W]; a trailing "+" is the key itself.
-        QString text = QKeySequence(seq[0]).toString(QKeySequence::NativeText);
-        QStringList keys = text.split('+', Qt::SkipEmptyParts);
-        if (text.endsWith(QLatin1String("++")))
-            keys << QStringLiteral("+");
-        for (const QString &k : keys) {
-            auto *cap = new QLabel(k);
-            cap->setObjectName("Keycap");
-            m_keys->addWidget(cap);
-        }
-        auto *l = new QLabel(s.label);
+    if (recent.isEmpty()) {
+        auto *l = new QLabel(tr("Connections you open appear here. Double-click one in "
+                                "the tree to start."));
         l->setObjectName("StartMuted");
-        m_keys->addSpacing(4);
-        m_keys->addWidget(l);
+        l->setWordWrap(true);
+        m_recent->addWidget(l);
+        return;
     }
-}
-
-void StartPage::showEvent(QShowEvent *e)
-{
-    // Shortcuts are registered after the page is built and can change in
-    // Options; read them whenever the page comes into view.
-    refreshShortcuts();
-    QWidget::showEvent(e);
+    for (const Recent &r : recent) {
+        // One flat row: icon, name, host on the right.
+        auto *b = new QPushButton;
+        b->setObjectName("StartRecent");
+        b->setCursor(Qt::PointingHandCursor);
+        b->setAccessibleName(r.name);
+        b->setToolTip(tr("Open %1").arg(r.name));
+        auto *h = new QHBoxLayout(b);
+        h->setContentsMargins(10, 6, 10, 6);
+        h->setSpacing(10);
+        auto *icon = new QLabel;
+        icon->setPixmap(r.icon.pixmap(16, 16));
+        auto *name = new QLabel(r.name);
+        name->setObjectName("StartRecentName");
+        auto *detail = new QLabel(r.detail);
+        detail->setObjectName("StartMuted");
+        h->addWidget(icon);
+        h->addWidget(name);
+        h->addStretch(1);
+        h->addWidget(detail);
+        for (QWidget *w : {static_cast<QWidget *>(icon), static_cast<QWidget *>(name),
+                           static_cast<QWidget *>(detail)})
+            w->setAttribute(Qt::WA_TransparentForMouseEvents);
+        const QString id = r.id;
+        connect(b, &QPushButton::clicked, this, [this, id] { emit openRecent(id); });
+        m_recent->addWidget(b);
+    }
 }
 
 void StartPage::changeEvent(QEvent *e)

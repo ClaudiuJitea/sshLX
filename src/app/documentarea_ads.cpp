@@ -202,14 +202,39 @@ void DocumentArea::floatCurrent()
 {
     SessionWidget *s = currentSession();
     if (CDockWidget *dw = s ? m_docks.value(s) : nullptr) {
+        // Qt activates the new window as it is shown; asking again (raise)
+        // only leaves an unused activation token on Wayland.
         dw->setFloating();
-        activate(s);
+        m_current = s;
+        s->focusTerminal();
+        emit currentSessionChanged(s);
     }
 }
 
 void DocumentArea::setHomeDock(CDockWidget *dw)
 {
     m_home = dw;
+}
+
+void DocumentArea::setSidePanels(const QList<CDockWidget *> &panels)
+{
+    m_sidePanels.clear();
+    for (CDockWidget *dw : panels)
+        m_sidePanels << dw;
+}
+
+CDockAreaWidget *DocumentArea::sidePanelArea(CDockWidget *except) const
+{
+    // A docked area of the main window (the manager lists only its own
+    // areas, not floating ones) holding another side panel.
+    for (CDockAreaWidget *a : m_mgr->openedDockAreas()) {
+        CDockWidget *cur = a->currentDockWidget();
+        if (!cur || cur == except || cur == m_home)
+            continue;
+        if (!qobject_cast<SessionWidget *>(cur->widget()))
+            return a;
+    }
+    return nullptr;
 }
 
 void DocumentArea::attachCurrent()
@@ -233,8 +258,15 @@ void DocumentArea::attach(CFloatingDockContainer *fc)
                 m_mgr->addDockWidgetTabToArea(dw, area);
             else
                 m_mgr->addDockWidget(RightDockWidgetArea, dw);
+        } else if (CDockAreaWidget *beside = sidePanelArea(dw)) {
+            // Back into the side column, in the usual order of the panels.
+            int mine = m_sidePanels.indexOf(dw);
+            int theirs = m_sidePanels.indexOf(beside->currentDockWidget());
+            m_mgr->addDockWidget(mine >= 0 && theirs >= 0 && mine < theirs
+                                     ? TopDockWidgetArea : BottomDockWidgetArea,
+                                 dw, beside);
         } else {
-            // A side panel: left of the session area, as it starts out.
+            // The only side panel: left of the session area, as it starts out.
             m_mgr->addDockWidget(LeftDockWidgetArea, dw, targetArea(QString()));
         }
     }

@@ -43,9 +43,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.5.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.5.1_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.5.0-x86_64.AppImage && ./sshLX-0.5.0-x86_64.AppImage
+chmod +x sshLX-0.5.1-x86_64.AppImage && ./sshLX-0.5.1-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.

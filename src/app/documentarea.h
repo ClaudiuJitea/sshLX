@@ -53,6 +53,9 @@ public:
     // The permanent page that anchors the session area; new tabs open
     // next to it when no session is current.
     void setHomeDock(ads::CDockWidget *dw);
+    // The side panels (connections, config...) in their top-to-bottom
+    // order; re-attaching a panel puts it back into that column.
+    void setSidePanels(const QList<ads::CDockWidget *> &panels);
 
 signals:
     void currentSessionChanged(SessionWidget *s);
@@ -63,10 +66,12 @@ private:
     ads::CDockAreaWidget *targetArea(const QString &panel) const;
     // Adds the re-attach button to a floating window's title bar.
     void decorateFloating(ads::CFloatingDockContainer *fc);
+    ads::CDockAreaWidget *sidePanelArea(ads::CDockWidget *except) const;
 
     ads::CDockManager *m_mgr;
     QHash<SessionWidget *, ads::CDockWidget *> m_docks;
     QPointer<SessionWidget> m_current;
     QHash<QString, QPointer<ads::CDockAreaWidget>> m_panels;
     QPointer<ads::CDockWidget> m_home;
+    QList<QPointer<ads::CDockWidget>> m_sidePanels;
 };

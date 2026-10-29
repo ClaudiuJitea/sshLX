@@ -74,6 +74,8 @@ private:
     void saveWindowState();
     void showOptions();
     void applyDefaultSizes();
+    void rememberRecent(const QString &connectionId);
+    void refreshRecent();
 
     DocumentArea *m_docs;
     ConnectionStore *m_store;

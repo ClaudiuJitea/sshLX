@@ -31,6 +31,10 @@
   <file>icons/connections.svg</file>
   <file>icons/copy.svg</file>
   <file>icons/attach.svg</file>
+  <file>icons/start-new.svg</file>
+  <file>icons/start-quick.svg</file>
+  <file>icons/start-import.svg</file>
+  <file>icons/start-options.svg</file>
   <file>icons/detach.svg</file>
   <file>icons/disconnect.svg</file>
   <file>icons/disconnected.svg</file>

@@ -55,6 +55,7 @@
 #include "serialmanager.h"
 #include "fontspec.h"
 #include "mainwindow.h"
+#include "startpage.h"
 #include "promptbar.h"
 #include "qthostloop.h"
 #include "sessionwidget.h"
@@ -179,6 +180,12 @@ private slots:
             w->store()->newConnection(f, child)->icon = childIcon;
             extra << f;
         }
+        // A few recent connections on the Start page.
+        QStringList recent;
+        for (const char *name : {"web-01", "k8s-prod", "db-cluster"})
+            recent << w->store()->tree().findBySession(name)->id;
+        QSettings().setValue("start/recent", recent);
+        emit w->store()->structureChanged();
         w->resize(1280, 760);
         w->show();
         w->restoreStartupState();
@@ -189,6 +196,7 @@ private slots:
         w->connectionsPanel()->select(sel);
         QTest::qWait(200);
         w->grab().save(dir + "/sshlx-start.png");
+        QSettings().remove("start/recent");
         if (QToolBar *tb = w->connectionsPanel()->findChild<QToolBar *>())
             tb->grab().save(dir + "/sshlx-toolbar.png");
         // The File menu, as it pops up.
@@ -310,6 +318,39 @@ private slots:
         for (ConnectionNode *f : extra)
             w->store()->remove(f);
         delete w;
+    }
+
+    void startPageRecent()
+    {
+        ConnectionStore *store = m_main->store();
+        ConnectionNode *n = store->newConnection(nullptr, "recent-test");
+        QVERIFY(n);
+        const QString id = n->id;
+        QSettings().setValue("start/recent", QStringList{id, "no-such-id"});
+        emit store->structureChanged();
+        auto *start = m_main->findChild<StartPage *>();
+        QVERIFY(start);
+        auto rows = [start] {
+            QList<QPushButton *> r;
+            for (QPushButton *b : start->findChildren<QPushButton *>("StartRecent"))
+                r << b;
+            return r;
+        };
+        QCOMPARE(rows().size(), 1);   // the unknown id is skipped
+        QCOMPARE(rows().first()->accessibleName(), QString("recent-test"));
+        QSignalSpy spy(start, &StartPage::openRecent);
+        rows().first()->click();
+        QCOMPARE(spy.size(), 1);
+        QCOMPARE(spy.first().first().toString(), id);
+        // The main window tried to open it: this connection has no PuTTY
+        // session behind it, so it says so.
+        QTRY_VERIFY(QApplication::activeModalWidget());
+        QApplication::activeModalWidget()->close();
+        QTRY_VERIFY(!QApplication::activeModalWidget());
+        // Deleted connections drop out of the list.
+        store->remove(n);
+        QTRY_COMPARE(rows().size(), 0);
+        QSettings().remove("start/recent");
     }
 
     void updateCheckVersions()
@@ -1006,6 +1047,23 @@ private slots:
             QVERIFY(!home->isFloating());
             home->setAsCurrentTab();
             QTRY_VERIFY(!undock->isEnabled());   // Start alone cannot detach
+
+            // A re-attached side panel goes back under the other one, not
+            // into a column of its own.
+            ads::CDockWidget *conns = mgr->findDockWidget("ConnectionsDock");
+            ads::CDockWidget *config = mgr->findDockWidget("ConfigDock");
+            QVERIFY(conns && config);
+            config->setFloating();
+            QVERIFY(config->isFloating());
+            docs->attach(config->floatingDockContainer());
+            QVERIFY(!config->isFloating());
+            QTRY_VERIFY(config->isVisible());
+            const QRect c = conns->dockAreaWidget()->geometry();
+            const QRect g = config->dockAreaWidget()->geometry();
+            QVERIFY(conns->dockAreaWidget() != config->dockAreaWidget());
+            QCOMPARE(g.left(), c.left());
+            QCOMPARE(g.width(), c.width());
+            QVERIFY(g.top() > c.top());
         }
 
         // The tab close button routes through the normal close path. (A

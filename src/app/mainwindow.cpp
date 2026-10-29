@@ -34,6 +34,7 @@
 
 #include "connectionspanel.h"
 #include "connectionstore.h"
+#include "connectiontreemodel.h"
 #include "documentarea.h"
 #include "keyring.h"
 #include "optionsdialog.h"
@@ -119,6 +120,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(m_grid, &PropertyGrid::openRequested, this,
             [this](ConnectionNode *n) { openConnection(n, false); });
     connect(m_grid, &PropertyGrid::aboutRequested, this, &MainWindow::showAbout);
+    m_docs->setSidePanels({m_connectionsDock, m_configDock});
 
     // Serial hot-plug: "Serial Ports" tree section + device banner.
     m_bannerBar = new QToolBar(tr("Device notifications"), this);
@@ -152,6 +154,15 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     connect(start, &StartPage::quickConnect, this, &MainWindow::newSession);
     connect(start, &StartPage::importSessions, this, &MainWindow::importPuttySessions);
     connect(start, &StartPage::options, this, &MainWindow::showOptions);
+    connect(start, &StartPage::openRecent, this, [this](const QString &id) {
+        if (ConnectionNode *n = m_store->tree().findById(id))
+            showConnection(n);
+    });
+    // Names, hosts and icons can change, and connections can be deleted.
+    for (auto sig : {&ConnectionStore::reset, &ConnectionStore::structureChanged})
+        connect(m_store, sig, this, &MainWindow::refreshRecent);
+    connect(m_store, &ConnectionStore::nodeChanged, this, &MainWindow::refreshRecent);
+    refreshRecent();
     buildMenus();
     m_sendNextLabel = new QLabel;
     statusBar()->addPermanentWidget(m_sendNextLabel);
@@ -377,6 +388,8 @@ void MainWindow::openConnection(ConnectionNode *n, bool withOptions, const QStri
                                  .arg(n->session));
         return;
     }
+    if (!m_restoring)
+        rememberRecent(n->id);
     sshlx_conf *c = m_store->effectiveConf(n);
     const QString name = n->name, id = n->id, panel = n->panel;
     if (withOptions || !sshlx_conf_launchable(c)) {
@@ -392,6 +405,38 @@ void MainWindow::openConnection(ConnectionNode *n, bool withOptions, const QStri
     }
     openSession(c, name, id, true, panel, dockName);
     sshlx_conf_free(c);
+}
+
+// The Start page's "Recent connections": connection ids, most recent first.
+static const int kRecentMax = 5;
+
+void MainWindow::rememberRecent(const QString &id)
+{
+    QSettings st;
+    QStringList ids = st.value("start/recent").toStringList();
+    ids.removeAll(id);
+    ids.prepend(id);
+    while (ids.size() > kRecentMax)
+        ids.removeLast();
+    st.setValue("start/recent", ids);
+    refreshRecent();
+}
+
+void MainWindow::refreshRecent()
+{
+    auto *start = qobject_cast<StartPage *>(m_startDock->widget());
+    if (!start)
+        return;
+    QList<StartPage::Recent> list;
+    for (const QString &id : QSettings().value("start/recent").toStringList()) {
+        ConnectionNode *n = m_store->tree().findById(id);
+        if (!n || n->isFolder())
+            continue;   // deleted since
+        QIcon icon = n->icon.isEmpty() ? SessionWidget::iconForProtocol(m_store->protocolOf(n))
+                                       : ConnectionTreeModel::iconFor(n->icon);
+        list.append({n->id, n->name, m_store->hostOf(n), icon});
+    }
+    start->setRecent(list);
 }
 
 void MainWindow::showConnection(ConnectionNode *n)
@@ -745,8 +790,6 @@ void MainWindow::showOptions()
 {
     OptionsDialog dlg(this);
     dlg.exec();
-    if (auto *start = qobject_cast<StartPage *>(m_startDock->widget()))
-        start->refreshShortcuts();
 }
 
 void MainWindow::globalEvent(sshlx_global_event ev, const QString &text)

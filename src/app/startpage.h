@@ -2,28 +2,36 @@
 // side panels keep their width) and offers the common first actions.
 #pragma once
 
+#include <QIcon>
 #include <QList>
 #include <QPair>
 #include <QWidget>
 
-class QHBoxLayout;
 class QLabel;
+class QVBoxLayout;
 
 class StartPage : public QWidget {
     Q_OBJECT
 public:
     explicit StartPage(QWidget *parent = nullptr);
-    // The shortcut row shows the keys currently assigned in Options.
-    void refreshShortcuts();
+
+    struct Recent {
+        QString id;       // connection id
+        QString name;
+        QString detail;   // host, shown muted on the right
+        QIcon icon;
+    };
+    // The "Recent connections" list, most recent first.
+    void setRecent(const QList<Recent> &recent);
 
 signals:
     void newConnection();
     void quickConnect();
     void importSessions();
     void options();
+    void openRecent(const QString &connectionId);
 
 protected:
-    void showEvent(QShowEvent *e) override;
     void changeEvent(QEvent *e) override;
 
 private:
@@ -31,5 +39,5 @@ private:
 
     QLabel *m_logo;
     QList<QPair<QLabel *, QString>> m_icons;   // icon label, icon name
-    QHBoxLayout *m_keys;
+    QVBoxLayout *m_recent;
 };

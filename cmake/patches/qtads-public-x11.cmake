@@ -177,3 +177,59 @@ patch_file("src/linux/FloatingWidgetTitleBar.cpp"
 	if (ev->button() == Qt::LeftButton)
 	{
 		d->DragState = DraggingFloatingWidget;")
+
+# Eighth fix: ADS calls activateWindow() again right after showing a floating
+# window, after a drag and after a drop, although Qt already activates a
+# window when it is shown. On Wayland every call requests an xdg-activation
+# token; the redundant ones are never used, and GNOME shows the busy
+# (spinning) pointer until each unused token times out. Keep the calls on
+# xcb; elsewhere only activate a window that is not already active, and leave
+# the show-time activation to Qt.
+patch_file("src/FloatingDockContainer.cpp"
+  "    if (CDockManager::testConfigFlag(CDockManager::FocusHighlighting))
+    {
+        this->window()->activateWindow();
+    }"
+  "    /* sshLX patch: Qt activates a shown window itself; xcb only. */
+    if (CDockManager::testConfigFlag(CDockManager::FocusHighlighting)
+        && QGuiApplication::platformName() == QLatin1String(\"xcb\"))
+    {
+        this->window()->activateWindow();
+    }"
+  "	setWindowOpacity(1);
+	activateWindow();"
+  "	setWindowOpacity(1);
+	if (!isActiveWindow()) /* sshLX patch: no redundant activation */
+		activateWindow();")
+
+patch_file("src/DockContainerWidget.cpp"
+  "	window()->activateWindow();
+	if (SingleDroppedDockWidget)"
+  "	if (!window()->isActiveWindow()) /* sshLX patch: no redundant activation */
+		window()->activateWindow();
+	if (SingleDroppedDockWidget)"
+  "	window()->activateWindow();
+	d->DockManager->notifyWidgetOrAreaRelocation(Widget);"
+  "	if (!window()->isActiveWindow()) /* sshLX patch: no redundant activation */
+		window()->activateWindow();
+	d->DockManager->notifyWidgetOrAreaRelocation(Widget);")
+
+patch_file("src/DockWidget.cpp"
+  "		FloatingWindow->raise();
+		FloatingWindow->activateWindow();"
+  "		FloatingWindow->raise();
+		if (!FloatingWindow->isActiveWindow()) /* sshLX patch: no redundant activation */
+			FloatingWindow->activateWindow();")
+
+# Ninth fix: the floating title bar creates its label and buttons without a
+# parent and calls setVisible(true) on them before they are laid out, which
+# briefly makes each one a top-level window. On Wayland each of these windows
+# requests an xdg-activation token that is never used; GNOME shows the busy
+# (spinning) pointer until they time out. Create them inside the title bar.
+patch_file("src/linux/FloatingWidgetTitleBar.cpp"
+  "	TitleLabel = new tTabLabel();"
+  "	TitleLabel = new tTabLabel(_this); /* sshLX patch: never a top-level window */"
+  "	CloseButton = new tCloseButton();"
+  "	CloseButton = new tCloseButton(_this); /* sshLX patch */"
+  "	MaximizeButton = new tMaximizeButton();"
+  "	MaximizeButton = new tMaximizeButton(_this); /* sshLX patch */")
