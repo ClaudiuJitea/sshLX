@@ -80,3 +80,100 @@ patch_file("src/DockAreaTabBar.cpp"
 patch_file("src/DockManager.cpp"
   "connect(qApp, &QApplication::focusWindowChanged, [this](QWindow* focusWindow)"
   "connect(qApp, &QApplication::focusWindowChanged, this, [this](QWindow* focusWindow) /* sshLX patch */")
+
+# Fourth fix: on Linux the dock manager emulates "floating windows stay above
+# the main window" by toggling Qt::WindowStaysOnTopHint on every main-window
+# (de)activation when the platform is not xcb. Changing window flags on a
+# visible window hides and recreates it, so on Wayland the first click on the
+# main window made a detached tab vanish (and its hide handler closed the
+# tab), leaving a corrupted window and an app that looked frozen. Wayland has
+# no stays-on-top anyway; the floating windows are transient children of the
+# main window, so the compositor already keeps them above it. Only do the
+# emulation on xcb, through the X properties it already uses there.
+patch_file("src/DockManager.cpp"
+  "			else
+			{
+                    _window->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+			}"
+  "			/* sshLX patch: no window-flag toggling off xcb (it hides the window). */"
+  "            else
+			{
+				_window->setWindowFlag(Qt::WindowStaysOnTopHint, false);
+			}
+			_window->raise();"
+  "            else
+			{
+				/* sshLX patch: no window-flag toggling off xcb (it hides the window). */
+				continue;
+			}
+			_window->raise();")
+
+# Fifth fix: CFloatingDockContainer::show() calls winId() for X11-only
+# taskbar hints on every platform. winId() makes the floating window native
+# and, since it is a child of the dock manager, Qt then turns the dock
+# manager, its splitters and the menu bar into native child windows too. On
+# Wayland those are decorated subsurfaces: the main window showed a second
+# title bar with its own buttons and stopped responding normally. Only touch
+# the native handle on xcb.
+patch_file("src/FloatingDockContainer.cpp"
+  "	internal::xcb_add_prop(true, winId(), \"_NET_WM_STATE\", \"_NET_WM_STATE_SKIP_TASKBAR\");
+	internal::xcb_add_prop(true, winId(), \"_NET_WM_STATE\", \"_NET_WM_STATE_SKIP_PAGER\");"
+  "	/* sshLX patch: winId() only on xcb; elsewhere it makes the main window's
+	   widgets native child windows (decorated subsurfaces on Wayland). */
+	if (QGuiApplication::platformName() == QLatin1String(\"xcb\"))
+	{
+		internal::xcb_add_prop(true, winId(), \"_NET_WM_STATE\", \"_NET_WM_STATE_SKIP_TASKBAR\");
+		internal::xcb_add_prop(true, winId(), \"_NET_WM_STATE\", \"_NET_WM_STATE_SKIP_PAGER\");
+	}")
+
+# Sixth fix: "Detach Group" did nothing in an area holding a non-floatable
+# tab (sshLX's Start page), because the whole group then cannot float. Let
+# the button detach the current tab instead when that tab can float, and
+# refresh the button whenever the current tab changes.
+patch_file("src/DockAreaWidget.cpp"
+  "		TitleBar->button(TitleBarButtonUndock)->setEnabled(
+			_this->features().testFlag(CDockWidget::DockWidgetFloatable));"
+  "		/* sshLX patch: or the current tab alone, if it can float. */
+		auto Current = _this->currentDockWidget();
+		TitleBar->button(TitleBarButtonUndock)->setEnabled(
+			_this->features().testFlag(CDockWidget::DockWidgetFloatable)
+			|| (Current && Current->features().testFlag(CDockWidget::DockWidgetFloatable)));"
+  "	d->ContentsLayout->currentWidget()->show();
+	Q_EMIT currentChanged(index);"
+  "	d->ContentsLayout->currentWidget()->show();
+	d->updateTitleBarButtonStates(); /* sshLX patch */
+	Q_EMIT currentChanged(index);")
+
+patch_file("src/DockAreaTitleBar.cpp"
+  "		d->makeAreaFloating(mapFromGlobal(QCursor::pos()), DraggingInactive);
+	}
+}"
+  "		d->makeAreaFloating(mapFromGlobal(QCursor::pos()), DraggingInactive);
+	}
+	/* sshLX patch: the group cannot float; detach the current tab. */
+	else if (auto Current = d->DockArea->currentDockWidget();
+	         Current && Current->features().testFlag(CDockWidget::DockWidgetFloatable))
+	{
+		Current->setFloating();
+	}
+}")
+
+# Seventh fix: the floating window's own title bar drags the window by
+# calling move() on every mouse move. Wayland clients cannot position their
+# windows, so the window stayed put. Off xcb, hand the drag to the compositor
+# with QWindow::startSystemMove() (re-docking by drag is not available there).
+patch_file("src/linux/FloatingWidgetTitleBar.cpp"
+  "#include <QMouseEvent>"
+  "#include <QMouseEvent>\n#include <QGuiApplication>\n#include <QWindow> /* sshLX patch */"
+  "	if (ev->button() == Qt::LeftButton)
+	{
+		d->DragState = DraggingFloatingWidget;"
+  "	/* sshLX patch: only the compositor can move windows on Wayland. */
+	if (ev->button() == Qt::LeftButton && QGuiApplication::platformName() != QLatin1String(\"xcb\")
+	    && window()->windowHandle() && window()->windowHandle()->startSystemMove())
+	{
+		return;
+	}
+	if (ev->button() == Qt::LeftButton)
+	{
+		d->DragState = DraggingFloatingWidget;")

@@ -18,7 +18,8 @@
 - **Connection tree:** folders, favourites, search and drag & drop. Your existing PuTTY sessions appear automatically.
 - **Group icons:** 22 line icons that follow the dark and light themes, for folders and connections (servers, databases, cloud, network gear, containers, lab, sites and more).
 - **Property grid** to edit connections and folders, with **folder inheritance** (set a username or proxy once per folder).
-- **Dockable, splittable tabs:** side by side, stacked or floating. The layout and open tabs are restored on the next start.
+- **Dockable, splittable tabs:** side by side, stacked or floating (detach a tab, re-attach it from its window or the View menu). The layout and open tabs are restored on the next start.
+- **Update check:** Help → Check for Updates asks GitHub for the latest release.
 - **Every PuTTY option** stays available, through PuTTY's complete settings dialog.
 - **PuTTY compatible:** sessions are stored in PuTTY's own format, so `putty` keeps working with them.
 - **Serial hot-plug:**
@@ -42,9 +43,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.4.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.5.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.4.0-x86_64.AppImage && ./sshLX-0.4.0-x86_64.AppImage
+chmod +x sshLX-0.5.0-x86_64.AppImage && ./sshLX-0.5.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.

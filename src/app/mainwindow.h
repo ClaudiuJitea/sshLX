@@ -18,6 +18,7 @@ class QToolBar;
 namespace ads { class CDockManager; class CDockWidget; }
 class QMenu;
 class QLabel;
+class QAction;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -52,6 +53,7 @@ public:
 public slots:
     void newSession();
     void showAbout();
+    void checkForUpdates();
 
 protected:
     void closeEvent(QCloseEvent *e) override;
@@ -88,4 +90,5 @@ private:
     QMenu *m_savedMenu = nullptr;
     QMenu *m_sessionMenu = nullptr;
     QLabel *m_sendNextLabel = nullptr;
+    QAction *m_updateAction = nullptr;
 };

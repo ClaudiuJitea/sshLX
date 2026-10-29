@@ -1,11 +1,14 @@
 #include "documentarea.h"
 #include "icons.h"
 
+#include <QBoxLayout>
+#include <QToolButton>
 #include <QUuid>
 
 #include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockWidget.h>
+#include <FloatingDockContainer.h>
 
 #include "sessionwidget.h"
 #include "sshlx_engine.h"
@@ -23,6 +26,7 @@ DocumentArea::DocumentArea(CDockManager *manager, QObject *parent)
             emit currentSessionChanged(s);
         }
     });
+    connect(m_mgr, &CDockManager::floatingWidgetCreated, this, &DocumentArea::decorateFloating);
 }
 
 DocumentArea::~DocumentArea() = default;
@@ -206,4 +210,58 @@ void DocumentArea::floatCurrent()
 void DocumentArea::setHomeDock(CDockWidget *dw)
 {
     m_home = dw;
+}
+
+void DocumentArea::attachCurrent()
+{
+    SessionWidget *s = currentSession();
+    CDockWidget *dw = s ? m_docks.value(s) : nullptr;
+    if (CFloatingDockContainer *fc = dw ? dw->floatingDockContainer() : nullptr) {
+        attach(fc);
+        activate(s);
+    }
+}
+
+void DocumentArea::attach(CFloatingDockContainer *fc)
+{
+    const QList<CDockWidget *> widgets = fc->dockWidgets();
+    for (CDockWidget *dw : widgets) {
+        if (dw->isClosed())
+            continue;
+        if (qobject_cast<SessionWidget *>(dw->widget())) {
+            if (CDockAreaWidget *area = targetArea(QString()))
+                m_mgr->addDockWidgetTabToArea(dw, area);
+            else
+                m_mgr->addDockWidget(RightDockWidgetArea, dw);
+        } else {
+            // A side panel: left of the session area, as it starts out.
+            m_mgr->addDockWidget(LeftDockWidgetArea, dw, targetArea(QString()));
+        }
+    }
+}
+
+void DocumentArea::decorateFloating(CFloatingDockContainer *fc)
+{
+    // Only ADS's own title bar (used on Wayland and KWin) has a layout to
+    // extend; with a native title bar the View menu entry remains.
+    QWidget *bar = fc->titleBarWidget();
+    auto *layout = bar ? qobject_cast<QBoxLayout *>(bar->layout()) : nullptr;
+    auto *maximize = bar ? bar->findChild<QToolButton *>("floatingTitleMaximizeButton") : nullptr;
+    if (!layout || !maximize)
+        return;
+    auto *btn = new QToolButton(bar);
+    btn->setObjectName("floatingTitleAttachButton");
+    btn->setAutoRaise(true);
+    btn->setFocusPolicy(Qt::NoFocus);
+    btn->setToolTip(tr("Re-attach to Main Window"));
+    btn->setIcon(Icons::get("attach"));
+    btn->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    layout->insertWidget(layout->indexOf(maximize), btn);
+    connect(btn, &QToolButton::clicked, this, [this, fc] {
+        // Re-docking deletes the floating window; leave its click handler first.
+        QMetaObject::invokeMethod(this, [this, fc = QPointer<CFloatingDockContainer>(fc)] {
+            if (fc)
+                attach(fc);
+        }, Qt::QueuedConnection);
+    });
 }

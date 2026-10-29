@@ -15,6 +15,7 @@ namespace ads {
 class CDockManager;
 class CDockWidget;
 class CDockAreaWidget;
+class CFloatingDockContainer;
 }
 
 class DocumentArea : public QObject {
@@ -43,6 +44,11 @@ public:
     // Move the current tab into a new dock area beside/below its own.
     void splitCurrent(Qt::Orientation o);
     void floatCurrent();
+    // Dock the current floating tab's window back into the main window.
+    void attachCurrent();
+    // Dock every tab of a floating window back into the main window:
+    // sessions to the session area, side panels beside the session area.
+    void attach(ads::CFloatingDockContainer *fc);
     ads::CDockWidget *dockFor(SessionWidget *s) const { return m_docks.value(s); }
     // The permanent page that anchors the session area; new tabs open
     // next to it when no session is current.
@@ -55,6 +61,8 @@ signals:
 
 private:
     ads::CDockAreaWidget *targetArea(const QString &panel) const;
+    // Adds the re-attach button to a floating window's title bar.
+    void decorateFloating(ads::CFloatingDockContainer *fc);
 
     ads::CDockManager *m_mgr;
     QHash<SessionWidget *, ads::CDockWidget *> m_docks;

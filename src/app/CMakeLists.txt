@@ -1,6 +1,6 @@
 # The Qt6 application. C++ only; talks to PuTTY exclusively through
 # sshlx_engine.h (no PuTTY header is reachable from here).
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Network)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
@@ -36,10 +36,11 @@ add_library(sshlx-app STATIC
   theme.cpp
   dialogkit.cpp
   mainwindow.cpp
+  updatecheck.cpp
   ${CMAKE_SOURCE_DIR}/resources/sshlx.qrc)
 target_compile_definitions(sshlx-app PUBLIC SSHLX_VERSION="${PROJECT_VERSION}")
 target_include_directories(sshlx-app PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(sshlx-app PUBLIC sshlx-engine sshlx-model sshlx-serialdetect Qt6::Widgets)
+target_link_libraries(sshlx-app PUBLIC sshlx-engine sshlx-model sshlx-serialdetect Qt6::Widgets Qt6::Network)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   target_compile_options(sshlx-app PRIVATE -Wall -Wextra -Wno-unused-parameter)
 endif()

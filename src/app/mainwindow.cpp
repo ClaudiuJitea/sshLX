@@ -21,7 +21,9 @@
 #include <QBoxLayout>
 #include <QPlainTextEdit>
 #include <QToolButton>
+#include <QDesktopServices>
 #include <QProcess>
+#include <QUrl>
 #include <QSettings>
 #include <QStandardPaths>
 #include <QStatusBar>
@@ -43,6 +45,7 @@
 #include "sessionwidget.h"
 #include "settingsdialog.h"
 #include "shortcuts.h"
+#include "updatecheck.h"
 
 // Resources live in the sshlx-app static library, so they must be
 // registered explicitly.
@@ -231,6 +234,8 @@ void MainWindow::buildMenus()
     sc.add("view.splitDown", splitD, QKeySequence());
     QAction *flt = view->addAction(Icons::get("float"), tr("F&loat Tab"), this, [this] { m_docs->floatCurrent(); });
     sc.add("view.float", flt, QKeySequence());
+    QAction *att = view->addAction(Icons::get("attach"), tr("Re-&attach Tab"), this, [this] { m_docs->attachCurrent(); });
+    sc.add("view.attach", att, QKeySequence());
     view->addSeparator();
     QAction *full = view->addAction(Icons::get("fullscreen"), tr("&Full Screen"));
     full->setCheckable(true);
@@ -277,6 +282,9 @@ void MainWindow::buildMenus()
     }
 
     QMenu *help = menuBar()->addMenu(tr("&Help"));
+    m_updateAction = help->addAction(Icons::get("reconnect"), tr("Check for &Updates..."), this,
+                                     &MainWindow::checkForUpdates);
+    help->addSeparator();
     help->addAction(Icons::get("info"), tr("&About sshLX"), this, &MainWindow::showAbout);
 }
 
@@ -753,6 +761,44 @@ void MainWindow::globalEvent(sshlx_global_event ev, const QString &text)
         showAbout();
         break;
     }
+}
+
+void MainWindow::checkForUpdates()
+{
+    m_updateAction->setEnabled(false);
+    statusBar()->showMessage(tr("Checking for updates..."));
+    auto *check = new UpdateCheck(this);
+    auto done = [this, check] {
+        m_updateAction->setEnabled(true);
+        statusBar()->clearMessage();
+        check->deleteLater();
+    };
+    connect(check, &UpdateCheck::finished, this,
+            [this, done](const UpdateCheck::Release &r, bool newer) {
+        done();
+        if (!newer) {
+            DialogKit::info(this, tr("sshLX is up to date"),
+                            tr("You are running sshLX %1, the latest release.")
+                                .arg(QApplication::applicationVersion()));
+            return;
+        }
+        int b = DialogKit::message(this, DialogKit::Kind::Info, tr("sshLX %1 is available").arg(r.version),
+                                   tr("You are running sshLX %1. Version %2 can be downloaded "
+                                      "from the release page (.deb and AppImage).")
+                                       .arg(QApplication::applicationVersion(), r.version),
+                                   {tr("Open Release Page"), tr("Later")}, 0, r.notes);
+        if (b == 0)
+            QDesktopServices::openUrl(QUrl(r.pageUrl));
+    });
+    connect(check, &UpdateCheck::failed, this, [this, done](const QString &err) {
+        done();
+        int b = DialogKit::message(this, DialogKit::Kind::Warning, tr("Could not check for updates"),
+                                   tr("GitHub could not be reached: %1").arg(err),
+                                   {tr("Open Release Page"), tr("Close")}, 1);
+        if (b == 0)
+            QDesktopServices::openUrl(QUrl(UpdateCheck::releasesPage()));
+    });
+    check->start();
 }
 
 void MainWindow::showAbout()

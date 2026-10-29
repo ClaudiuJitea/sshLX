@@ -237,18 +237,21 @@ ads--CDockContainerWidget ads--CDockSplitter::handle { background: %border%; }
 ads--CDockAreaWidget { background: %window%; }
 ads--CDockAreaTitleBar { background: %tabbar%; border: none; min-height: 36px; padding-left: 4px; }
 
-/* Tabs: rounded on top, on a darker bar; the current one takes the
-   content's colour so it reads as part of it, and the focused one also
-   gets an accent cap. */
-ads--CDockWidgetTab { background: transparent; border: none; border-top: 2px solid transparent;
+/* Tabs: rounded on top, on a darker bar. Each tab is outlined and filled,
+   with a gap to its neighbours, so tabs read as separate even when
+   inactive; the current one is the brightest, and the focused one also
+   gets a thicker accent cap (its top margin shrinks by the extra pixel so
+   all tabs keep the same baseline). */
+ads--CDockWidgetTab { background: %hoversoft%; border: 1px solid %border%; border-bottom: none;
     border-top-left-radius: 7px; border-top-right-radius: 7px;
-    margin: 5px 1px 0 1px; padding: 0 2px 0 10px; min-height: 28px; }
-ads--CDockWidgetTab:hover { background: %hoversoft%; }
+    margin: 5px 2px 0 2px; padding: 0 2px 0 10px; min-height: 28px; }
+ads--CDockWidgetTab:hover { background: %hover%; border-color: %borderstrong%; }
 ads--CDockWidgetTab QLabel { color: %muted%; padding: 0 4px 0 2px; }
 ads--CDockWidgetTab:hover QLabel { color: %text%; }
-ads--CDockWidgetTab[activeTab="true"] { background: %window%; }
+ads--CDockWidgetTab[activeTab="true"] { background: %button%; border-color: %borderstrong%; }
 ads--CDockWidgetTab[activeTab="true"] QLabel { color: %text%; }
-ads--CDockWidgetTab[focused="true"] { background: %window%; border-top: 2px solid %accent%; }
+ads--CDockWidgetTab[focused="true"] { background: %button%; border-color: %borderstrong%;
+    border-top: 2px solid %accent%; margin-top: 4px; }
 ads--CDockWidgetTab[focused="true"] QLabel { color: %text%; }
 
 #tabCloseButton { background: none; border: none; border-radius: 5px; margin: 0 2px; padding: 3px;
@@ -270,9 +273,10 @@ QScrollArea#dockWidgetScrollArea { padding: 0; border: none; }
 ads--CFloatingWidgetTitleBar { background: %window%; border-bottom: 1px solid %border%;
     qproperty-maximizeIcon: %maximize%; qproperty-normalIcon: %restore%; }
 #floatingTitleLabel { color: %text%; }
-#floatingTitleCloseButton, #floatingTitleMaximizeButton { qproperty-iconSize: 15px; border: none; margin: 3px; padding: 3px; border-radius: 5px; }
+#floatingTitleCloseButton, #floatingTitleMaximizeButton, #floatingTitleAttachButton { qproperty-iconSize: 15px; border: none; margin: 3px; padding: 3px; border-radius: 5px; }
 #floatingTitleCloseButton { qproperty-icon: %close%; }
-#floatingTitleCloseButton:hover, #floatingTitleMaximizeButton:hover { background: %hover%; }
+#floatingTitleAttachButton { qproperty-icon: %attach%; }
+#floatingTitleCloseButton:hover, #floatingTitleMaximizeButton:hover, #floatingTitleAttachButton:hover { background: %hover%; }
 )";
 
 QPalette makePalette(const Colors &c, bool darkMode)
@@ -360,6 +364,7 @@ QString dockStyleSheet()
     qss.replace("%close%", iconUrl("close"));
     qss.replace("%chevron%", iconUrl("chevron-down"));
     qss.replace("%detach%", iconUrl("detach"));
+    qss.replace("%attach%", iconUrl("attach"));
     qss.replace("%maximize%", iconUrl("maximize"));
     qss.replace("%restore%", iconUrl("restore"));
     return qss;

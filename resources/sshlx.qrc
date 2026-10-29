@@ -30,6 +30,7 @@
   <file>icons/connection-new.svg</file>
   <file>icons/connections.svg</file>
   <file>icons/copy.svg</file>
+  <file>icons/attach.svg</file>
   <file>icons/detach.svg</file>
   <file>icons/disconnect.svg</file>
   <file>icons/disconnected.svg</file>

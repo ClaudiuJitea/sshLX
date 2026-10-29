@@ -23,6 +23,8 @@
 #include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockWidget.h>
+#include <FloatingDockContainer.h>
+#include <QToolButton>
 #include <QTreeWidget>
 #include <QComboBox>
 #include <QGridLayout>
@@ -39,6 +41,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "updatecheck.h"
 #include "connectionspanel.h"
 #include "connectionstore.h"
 #include "connectiontreemodel.h"
@@ -307,6 +310,26 @@ private slots:
         for (ConnectionNode *f : extra)
             w->store()->remove(f);
         delete w;
+    }
+
+    void updateCheckVersions()
+    {
+        QVERIFY(UpdateCheck::isNewer("v0.5", "0.4.0"));
+        QVERIFY(UpdateCheck::isNewer("0.4.1", "0.4.0"));
+        QVERIFY(UpdateCheck::isNewer("v1.0", "0.9.9"));
+        QVERIFY(!UpdateCheck::isNewer("v0.4", "0.4.0"));
+        QVERIFY(!UpdateCheck::isNewer("v0.3", "0.4.0"));
+        QVERIFY(!UpdateCheck::isNewer("nightly", "0.4.0"));
+
+        UpdateCheck::Release r;
+        const QByteArray reply = "{\"tag_name\":\"v0.5\",\"name\":\"sshLX 0.5\",\"body\":\"notes\","
+                                 "\"html_url\":\"https://github.com/ClaudiuJitea/sshLX/releases/tag/v0.5\"}";
+        QVERIFY(UpdateCheck::parseRelease(reply, &r));
+        QCOMPARE(r.version, QString("0.5"));
+        QCOMPARE(r.notes, QString("notes"));
+        QVERIFY(r.pageUrl.endsWith("/v0.5"));
+        QVERIFY(!UpdateCheck::parseRelease("{\"message\":\"Not Found\"}", &r));
+        QVERIFY(!UpdateCheck::parseRelease("not json", &r));
     }
 
     void fontSpecRoundTrip()
@@ -953,6 +976,37 @@ private slots:
         docs->activate(restored2);
         docs->floatCurrent();
         QVERIFY(docs->dockFor(restored2)->isFloating());
+
+        // ...and back: the View menu entry, then the floating title-bar button.
+        docs->attachCurrent();
+        QVERIFY(!docs->dockFor(restored2)->isFloating());
+        docs->floatCurrent();
+        {
+            ads::CFloatingDockContainer *fc = docs->dockFor(restored2)->floatingDockContainer();
+            QVERIFY(fc);
+            auto *attachBtn = fc->findChild<QToolButton *>("floatingTitleAttachButton");
+            QVERIFY(attachBtn);
+            attachBtn->click();
+            QTRY_VERIFY(!docs->dockFor(restored2)->isFloating());
+        }
+
+        // "Detach Group" in an area that also holds the (non-floatable) Start
+        // page detaches the current tab.
+        {
+            auto *mgr = m_main->findChild<ads::CDockManager *>();
+            ads::CDockWidget *home = mgr->findDockWidget("StartDock");
+            QVERIFY(home);
+            ads::CDockAreaWidget *homeArea = home->dockAreaWidget();
+            mgr->addDockWidgetTabToArea(docs->dockFor(restored2), homeArea);
+            docs->activate(restored2);
+            auto *undock = homeArea->titleBarButton(ads::TitleBarButtonUndock);
+            QTRY_VERIFY(undock->isEnabled());
+            undock->click();
+            QVERIFY(docs->dockFor(restored2)->isFloating());
+            QVERIFY(!home->isFloating());
+            home->setAsCurrentTab();
+            QTRY_VERIFY(!undock->isEnabled());   // Start alone cannot detach
+        }
 
         // The tab close button routes through the normal close path. (A
         // connected session would first ask PuTTY's close confirmation.)
