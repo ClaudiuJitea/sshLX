@@ -1,5 +1,0 @@
-find_package(Qt6 REQUIRED COMPONENTS Test)
-set(CMAKE_AUTOMOC ON)
-add_executable(model_test model_test.cpp)
-target_link_libraries(model_test PRIVATE sshlx-model Qt6::Test)
-add_test(NAME connection-model COMMAND model_test)

@@ -158,13 +158,8 @@ if(NOT HAVE_ARM_DIT)
   list(APPEND SSHLX_PUTTY_SOURCES ${nodit})
 endif()
 
-# be_list.c compiled with sshLX's backend set and application name. It is a
-# separate object library because PuTTY configures it per program.
-sshlx_putty_src(_belist be_list.c)
-add_library(sshlx_putty_be_list OBJECT ${_belist})
-sshlx_putty_target_setup(sshlx_putty_be_list)
-target_compile_definitions(sshlx_putty_be_list PRIVATE
-  SSH=1 SERIAL=1 OTHERBACKENDS=1 APPNAME=sshLX)
+# be_list.c, PuTTY's per-program list of back ends, is not compiled:
+# src/engine/engine_backends.c is sshLX's (it adds the local shell).
 
 set(_accel_objs)
 foreach(lib ${SSHLX_PUTTY_ACCEL_OBJLIBS})
@@ -179,7 +174,7 @@ add_library(putty-core OBJECT
   ${SSHLX_PUTTY_COMMIT_C})
 # Object files from the per-flag object libraries; they must be added to
 # the final archive alongside putty-core's own objects.
-set(SSHLX_PUTTY_EXTRA_OBJECTS $<TARGET_OBJECTS:sshlx_putty_be_list> ${_accel_objs})
+set(SSHLX_PUTTY_EXTRA_OBJECTS ${_accel_objs})
 sshlx_putty_target_setup(putty-core)
 set(SSHLX_PUTTY_LINK_LIBS ${SSHLX_PUTTY_LIBS})
 # PuTTY's own sources are third-party: don't drown real warnings in theirs.

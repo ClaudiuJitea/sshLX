@@ -33,7 +33,7 @@
   <file>icons/attach.svg</file>
   <file>icons/start-new.svg</file>
   <file>icons/start-quick.svg</file>
-  <file>icons/start-import.svg</file>
+  <file>icons/start-local.svg</file>
   <file>icons/start-options.svg</file>
   <file>icons/detach.svg</file>
   <file>icons/disconnect.svg</file>
@@ -59,6 +59,7 @@
   <file>icons/paste.svg</file>
   <file>icons/properties.svg</file>
   <file>icons/proto-raw.svg</file>
+  <file>icons/proto-localshell.svg</file>
   <file>icons/proto-rlogin.svg</file>
   <file>icons/proto-serial.svg</file>
   <file>icons/proto-ssh-connection.svg</file>

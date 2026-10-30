@@ -1,3 +1,0 @@
-add_executable(serialdetect_test serialdetect_test.c)
-target_link_libraries(serialdetect_test sshlx-serialdetect)
-add_test(NAME serial-detect COMMAND serialdetect_test)

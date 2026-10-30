@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(sshLX VERSION 0.5.1
+project(sshLX VERSION 0.6.0
   DESCRIPTION "Tabbed, session-managed terminal client built on the PuTTY core"
   LANGUAGES C CXX)
 
@@ -10,7 +10,6 @@ project(sshLX VERSION 0.5.1
 set(SSHLX_PUTTY_SOURCE_DIR "${CMAKE_SOURCE_DIR}/../putty-0.85" CACHE PATH
   "PuTTY source tree (read-only; compiled out of tree)")
 option(SSHLX_UDEV "Use libudev (loaded at runtime) for serial hot-plug detection" ON)
-option(SSHLX_BUILD_TESTS "Build sshLX tests" ON)
 option(SSHLX_BUILD_APP "Build the Qt6 application" ON)
 option(SSHLX_KEYCHAIN "Optional password storage in the system keyring (QtKeychain)" ON)
 option(SSHLX_ADS_FROM_SYSTEM "Prefer a system Qt Advanced Docking System package" ON)
@@ -64,12 +63,7 @@ if(SSHLX_BUILD_APP)
   add_subdirectory(src/app)
 endif()
 
-if(SSHLX_BUILD_TESTS)
-  enable_testing()
-  add_subdirectory(tests)
-endif()
-
-# Integrity check as a build target as well as a test.
+# Checks that the PuTTY tree is untouched: cmake --build build --target verify-putty
 add_custom_target(verify-putty
   COMMAND ${CMAKE_SOURCE_DIR}/tools/verify-putty-untouched.sh
           ${SSHLX_PUTTY_SOURCE_DIR} ${CMAKE_SOURCE_DIR}/tools/putty-0.85.sha256

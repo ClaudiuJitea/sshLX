@@ -27,7 +27,7 @@ public:
 signals:
     void newConnection();
     void quickConnect();
-    void importSessions();
+    void localShell();
     void options();
     void openRecent(const QString &connectionId);
 

@@ -11,6 +11,7 @@
 #include <QPointer>
 
 class SessionWidget;
+class QMenu;
 namespace ads {
 class CDockManager;
 class CDockWidget;
@@ -35,6 +36,9 @@ public:
     // In visual order: dock areas, then tabs within each area.
     QList<SessionWidget *> sessions() const;
     void activate(SessionWidget *s);
+    // The session part of a tab's right-click menu (reconnect, appearance,
+    // split...); ADS adds Detach and Close below it.
+    void buildTabMenu(SessionWidget *s, QMenu *menu);
     void nextTab(int direction);
     void updateTab(SessionWidget *s);
     QString dockName(SessionWidget *s) const;
@@ -56,6 +60,10 @@ public:
     // The side panels (connections, config...) in their top-to-bottom
     // order; re-attaching a panel puts it back into that column.
     void setSidePanels(const QList<ads::CDockWidget *> &panels);
+    // Moves the side panels docked in the main window into one column at
+    // the left or right edge, keeping their order, tabs and sizes.
+    void setSidePanelsRight(bool right);
+    bool sidePanelsRight() const { return m_panelsRight; }
 
 signals:
     void currentSessionChanged(SessionWidget *s);
@@ -74,4 +82,5 @@ private:
     QHash<QString, QPointer<ads::CDockAreaWidget>> m_panels;
     QPointer<ads::CDockWidget> m_home;
     QList<QPointer<ads::CDockWidget>> m_sidePanels;
+    bool m_panelsRight = false;
 };

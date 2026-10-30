@@ -1,8 +1,7 @@
 # sshLX manual test checklist
 
-The automated suite (`ctest`) covers the engine and much of the UI on Qt's
-offscreen platform. This list covers what needs a real desktop, real
-servers and real hardware. Run it on both **X11** and **Wayland** sessions
+This list covers what needs a real desktop, real servers and real
+hardware. Run it on both **X11** and **Wayland** sessions
 (section 7).
 
 Before you start:

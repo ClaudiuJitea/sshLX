@@ -98,12 +98,15 @@ void DeviceBanner::showDevice(const SerialPortList::Device &d, bool accessible)
 }
 
 // ---- manager --------------------------------------------------------------------
-SerialManager::SerialManager(MainWindow *main, QToolBar *bannerBar, bool allowUdev,
-                             const QString &sysfsRoot, const QString &devRoot)
+SerialManager::SerialManager(MainWindow *main, QToolBar *bannerBar, bool allowUdev)
     : QObject(main), m_main(main), m_bar(bannerBar)
 {
     m_rules.load(SerialRules::defaultPath());
-    m_ports = new SerialPortList(this, allowUdev, sysfsRoot, devRoot);
+    m_ports = new SerialPortList(this, allowUdev);
+    m_ports->setHiddenFilter([this](const SerialPortList::Device &d) {
+        const SerialRule *r = m_rules.match(d.ruleKey(), usbKey(d));
+        return r && r->hidden;
+    });
     m_banner = new DeviceBanner;
     m_bar->addWidget(m_banner);
     m_bar->setVisible(false);
@@ -119,6 +122,15 @@ SerialManager::SerialManager(MainWindow *main, QToolBar *bannerBar, bool allowUd
 void SerialManager::saveRules()
 {
     m_rules.save(SerialRules::defaultPath());
+}
+
+void SerialManager::hideDevice(const SerialPortList::Device &d)
+{
+    SerialRule r = ruleFor(d);
+    r.hidden = true;
+    m_rules.set(r);
+    saveRules();
+    m_ports->refilter();
 }
 
 QString SerialManager::usbKey(const SerialPortList::Device &d)

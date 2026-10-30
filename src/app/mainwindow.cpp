@@ -44,6 +44,7 @@
 #include "serialmanager.h"
 #include "serialportlist.h"
 #include "sessionwidget.h"
+#include "terminallook.h"
 #include "settingsdialog.h"
 #include "shortcuts.h"
 #include "updatecheck.h"
@@ -129,10 +130,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_bannerBar->setFloatable(false);
     addToolBar(Qt::TopToolBarArea, m_bannerBar);
     QSettings st;
-    // SSHLX_SERIAL_SYSFS_ROOT / SSHLX_SERIAL_DEV_ROOT: test hooks only.
-    m_serial = new SerialManager(this, m_bannerBar, st.value("serial/udev", true).toBool(),
-                                 qEnvironmentVariable("SSHLX_SERIAL_SYSFS_ROOT"),
-                                 qEnvironmentVariable("SSHLX_SERIAL_DEV_ROOT"));
+    m_serial = new SerialManager(this, m_bannerBar, st.value("serial/udev", true).toBool());
     m_connections->setSerialPorts(m_serial->ports());
     connect(m_connections, &ConnectionsPanel::openSerialRequested, this,
             [this](int row, bool withOptions) {
@@ -143,6 +141,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         if (row >= 0 && row < m_serial->ports()->count())
             m_serial->editRule(m_serial->ports()->at(row));
     });
+    connect(m_connections, &ConnectionsPanel::serialHideRequested, this, [this](int row) {
+        if (row >= 0 && row < m_serial->ports()->count())
+            m_serial->hideDevice(m_serial->ports()->at(row));
+    });
     connect(m_docs, &DocumentArea::closeRequested, this, &MainWindow::closeSession);
     connect(m_docs, &DocumentArea::currentSessionChanged, this, [this](SessionWidget *s) {
         setWindowTitle(s ? s->title() + " - sshLX" : QString("sshLX"));
@@ -152,7 +154,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         m_connections->newConnection();
     });
     connect(start, &StartPage::quickConnect, this, &MainWindow::newSession);
-    connect(start, &StartPage::importSessions, this, &MainWindow::importPuttySessions);
+    connect(start, &StartPage::localShell, this, [this] { openLocalShell(); });
     connect(start, &StartPage::options, this, &MainWindow::showOptions);
     connect(start, &StartPage::openRecent, this, [this](const QString &id) {
         if (ConnectionNode *n = m_store->tree().findById(id))
@@ -201,6 +203,9 @@ void MainWindow::buildMenus()
     QAction *newSess = file->addAction(Icons::get("quick-connect"), tr("&Quick Connect (PuTTY dialog)..."), this,
                                        &MainWindow::newSession);
     sc.add("file.newSession", newSess, QKeySequence("Ctrl+Shift+N"));
+    QAction *local = file->addAction(Icons::get("proto-localshell"), tr("New &Local Shell"), this,
+                                     [this] { openLocalShell(); });
+    sc.add("file.localShell", local, QKeySequence("Ctrl+Shift+T"));
     file->addSeparator();
     file->addAction(Icons::get("import"), tr("&Import PuTTY Sessions"), this, &MainWindow::importPuttySessions);
     file->addAction(Icons::get("import"), tr("I&mport Connection Tree..."), this, &MainWindow::importTree);
@@ -228,9 +233,21 @@ void MainWindow::buildMenus()
     QMenu *view = menuBar()->addMenu(tr("&View"));
     view->addAction(m_connectionsDock->toggleViewAction());
     view->addAction(m_configDock->toggleViewAction());
+    QAction *panelsRight = view->addAction(tr("Side Panels on the R&ight"));
+    panelsRight->setCheckable(true);
+    panelsRight->setChecked(QSettings().value("window/panelsRight", false).toBool());
+    connect(panelsRight, &QAction::toggled, this, [this](bool on) {
+        m_docs->setSidePanelsRight(on);
+        QSettings().setValue("window/panelsRight", on);
+    });
     view->addAction(Icons::get("home"), tr("&Reset Layout"), this, [this] {
-        if (!m_dockManager->restoreState(m_defaultLayout))
+        if (m_dockManager->restoreState(m_defaultLayout)) {
+            // The default layout has the panels on the left.
+            if (m_docs->sidePanelsRight())
+                m_docs->setSidePanelsRight(true);
+        } else {
             applyDefaultSizes();
+        }
         // Put session tabs back next to the panels.
         for (SessionWidget *s : m_docs->sessions())
             if (ads::CDockWidget *dw = m_docs->dockFor(s))
@@ -338,6 +355,8 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
     connect(s, &SessionWidget::exitedWithClose, this, [this, s] {
         m_docs->removeSession(s);
     });
+    connect(s, &SessionWidget::saveAppearanceRequested, this, [this, s] { saveAppearance(s, false); });
+    connect(s, &SessionWidget::defaultAppearanceRequested, this, [this, s] { saveAppearance(s, true); });
     connect(s, &SessionWidget::duplicateRequested, this, [this, s] {
         openSession(s->conf(), s->displayName(), s->connectionId());
     });
@@ -576,6 +595,52 @@ void MainWindow::newSession()
     dlg->open();
 }
 
+void MainWindow::saveAppearance(SessionWidget *s, bool asDefault)
+{
+    const QStringList keys = TerminalLook::appearanceKeys();
+    if (asDefault) {
+        // PuTTY's "Default Settings": the starting point of every new
+        // connection, quick connect and local shell.
+        const char *name = "Default Settings";
+        sshlx_conf *c = sshlx_conf_load(name, nullptr);
+        for (const QString &k : keys)
+            sshlx_conf_key_copy(c, s->conf(), sshlx_conf_key_find(k.toUtf8().constData()));
+        char *err = nullptr;
+        if (sshlx_conf_save(c, name, &err) != 0)
+            DialogKit::warning(this, tr("Appearance not saved"), QString::fromUtf8(err ? err : ""));
+        else
+            statusBar()->showMessage(tr("New sessions will use this appearance."), 4000);
+        sshlx_free(err);
+        sshlx_conf_free(c);
+        return;
+    }
+    ConnectionNode *n = m_store->tree().findById(s->connectionId());
+    if (!n)
+        return;
+    sshlx_conf *c = m_store->effectiveConf(n);
+    for (const QString &k : keys) {
+        sshlx_conf_key_copy(c, s->conf(), sshlx_conf_key_find(k.toUtf8().constData()));
+        // A value inherited from a folder would override the saved one.
+        if (n->inherit.contains(k))
+            m_store->setInherited(n, k, false);
+    }
+    QString err;
+    if (!m_store->saveConf(n, c, &err))
+        DialogKit::warning(this, tr("Appearance not saved"), err);
+    else
+        statusBar()->showMessage(tr("Appearance saved to %1.").arg(n->name), 4000);
+    sshlx_conf_free(c);
+}
+
+SessionWidget *MainWindow::openLocalShell(const QString &dockName)
+{
+    sshlx_conf *c = sshlx_conf_new_default();
+    sshlx_conf_set_int(c, sshlx_conf_key_protocol(), SessionWidget::protocolId("localshell"));
+    SessionWidget *s = openSession(c, tr("Local shell"), {}, true, {}, dockName);
+    sshlx_conf_free(c);
+    return s;
+}
+
 void MainWindow::sessionTitleChanged(SessionWidget *s)
 {
     m_docs->updateTab(s);
@@ -638,6 +703,9 @@ QStringList MainWindow::openTabEntries() const
         } else if (!s->savedSessionName().isEmpty()) {
             kind = "session";
             ref = s->savedSessionName();
+        } else if (s->protocol() == SessionWidget::protocolId("localshell")) {
+            kind = "local";
+            ref = "shell";
         } else {
             continue;
         }
@@ -706,6 +774,9 @@ int MainWindow::restoreTabs(const QStringList &entries)
             s->setSerialByIdPath(ref);
             sshlx_conf_free(c);
             n++;
+        } else if (kind == "local") {
+            openLocalShell(dock);
+            n++;
         }
     }
     m_restoring = false;
@@ -754,6 +825,10 @@ void MainWindow::restoreStartupState()
     // Saved dock layout last, so restored tabs return to their previous
     // areas. ("layout2": layouts from before the Start page are ignored.)
     m_docs->restoreLayout(st.value("window/layout2").toByteArray());
+    // The default layout above has them on the left; a saved layout
+    // normally has them on the right already, and then this keeps them.
+    if (st.value("window/panelsRight", false).toBool())
+        m_docs->setSidePanelsRight(true);
     for (SessionWidget *s : m_docs->sessions())
         if (ads::CDockWidget *dw = m_docs->dockFor(s))
             if (dw->isClosed())

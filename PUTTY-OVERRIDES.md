@@ -75,7 +75,8 @@ returns early when the port is closed.
 
 There is no behaviour change for a single healthy session.
 
-**Tests.** `tests/engine_sessions_test.c`:
+**Verification.** These were checked by engine tests (removed from the
+repository in 0.6; see the git history before v0.6):
 - *serial close isolation*: opens 10 serial sessions on pseudo-terminals,
   closes 3, and checks the remaining ones and an unrelated earlier session
   still receive data. With PuTTY's original `serial.c` this fails

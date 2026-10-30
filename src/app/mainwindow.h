@@ -32,6 +32,8 @@ public:
                                bool connectNow = true, const QString &panel = QString(),
                                const QString &dockName = QString());
     void openSavedSession(const QString &name);
+    // A tab with the user's shell on this machine.
+    SessionWidget *openLocalShell(const QString &dockName = QString());
     void openConnection(ConnectionNode *n, bool withOptions = false,
                         const QString &dockName = QString());
     // Brings forward the connection's open tab (reconnecting it if it has
@@ -74,6 +76,9 @@ private:
     void saveWindowState();
     void showOptions();
     void applyDefaultSizes();
+    // Keep a tab's colours, fonts and cursor for its connection, or as
+    // PuTTY's Default Settings for every new session.
+    void saveAppearance(SessionWidget *s, bool asDefault);
     void rememberRecent(const QString &connectionId);
     void refreshRecent();
 

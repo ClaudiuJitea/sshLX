@@ -68,7 +68,7 @@ if(SSHLX_KEYCHAIN)
       GIT_REPOSITORY https://github.com/frankosterfeld/qtkeychain.git
       GIT_TAG 0.15.0
       GIT_SHALLOW TRUE)
-    # Don't build/register QtKeychain's own autotests with sshLX's ctest.
+    # Don't build QtKeychain's own autotests.
     set(_sshlx_bt ${BUILD_TESTING})
     set(BUILD_TESTING OFF)
     FetchContent_MakeAvailable(qtkeychain)

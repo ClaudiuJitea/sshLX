@@ -23,6 +23,7 @@ struct SerialRule {
     int flow = 0;           // PuTTY SER_FLOW_*: 0 none, 1 XON/XOFF, 2 RTS/CTS, 3 DSR/DTR
                             // (template default 8N1, no flow control; PuTTY's own default is XON/XOFF)
     bool autoReconnect = true;
+    bool hidden = false;    // left out of the Serial Ports list and ignored when plugged in
 
     QJsonObject toJson() const;
     static SerialRule fromJson(const QJsonObject &o);

@@ -99,9 +99,14 @@ PuTTY base: 0.85, at `../putty-0.85` (read-only, sha256 manifest in
     re-implemented from `crypto/CMakeLists.txt`.
   - Note: with GCC 15 a non-C99 build warns that `unreachable` is redefined
     (C23 `<stddef.h>`). Pinning C99 avoids this, as PuTTY's build does.
-- `be_list.c` is compiled unchanged with `APPNAME=sshLX SSH=1 SERIAL=1
-  OTHERBACKENDS=1`. This gives `backends[]` = SSH, Serial, Telnet, Rlogin,
-  SUPDUP, Raw, SSH-connection (bare). `appname` changes only user-visible
+- `be_list.c` is not compiled. PuTTY builds it per program, and sshLX's
+  `src/engine/engine_backends.c` takes its place: `backends[]` = SSH, Serial,
+  Telnet, Rlogin, SUPDUP, Raw, SSH-connection (bare) (what `be_list.c` gives
+  with `SSH=1 SERIAL=1 OTHERBACKENDS=1`), plus sshLX's local shell
+  (`engine_shell.c`, protocol 64, id `localshell`). That back end does not use
+  PuTTY's `unix/pty.c`: its SIGCHLD handler reaps every child with
+  `waitpid(-1)`, Qt's included; `engine_shell.c` waits for its own shell
+  through a pidfd. `appname` changes only user-visible
   strings such as titles. The storage dir is hard-coded to `putty` in
   `unix/storage.c`, so sessions stay at `~/.config/putty` / `~/.putty`.
 - GSSAPI: `PUTTY_GSSAPI=DYNAMIC` behaviour (dlopen of libgssapi_krb5 at
@@ -120,7 +125,7 @@ PuTTY base: 0.85, at `../putty-0.85` (read-only, sha256 manifest in
 
 | Group | Files |
 |---|---|
-| Core | `be_list.c` (with defines), `callback.c`, `timing.c`, `config.c`, `dialog.c`, `settings.c`, `ldisc.c`, `logging.c`, `pinger.c`, `sshpubk.c`, `sshrand.c`, `errsock.c`, `x11disp.c` |
+| Core | `callback.c`, `timing.c`, `config.c`, `dialog.c`, `settings.c`, `ldisc.c`, `logging.c`, `pinger.c`, `sshpubk.c`, `sshrand.c`, `errsock.c`, `x11disp.c` |
 | Terminal | `terminal/terminal.c`, `terminal/bidi.c`, `terminal/lineedit.c` |
 | SSH client | `ssh/` client and common sets exactly as in `ssh/CMakeLists.txt`: `sshcommon` objects (bpp*, ca-config, censor*, common, connection1/2, crc-attack-detector, gssc, login1, nocompress, pgssapi, portfwd, transient-hostkey-cache, transport2, verstring, x11fwd, zlib), plus agentf, connection1/2-client, kex2-client, mainchan, sharing, ssh, userauth2-client |
 | Other backends | `otherbackends/{raw,rlogin,supdup,telnet}.c`, `unix/serial.c` |
@@ -296,7 +301,7 @@ or choose B now**, since B would change Phase 0's design.
 |---|---|
 | `unix/window.c` / `unix/dialog.c` | not compiled at all; replaced (rule 5.2) |
 | `cmdline.c` globals | PuTTY ships `stubs/no-cmdline.c` for exactly this case |
-| `be_list.c` (app name, backends) | parameterised by compile definitions |
+| `be_list.c` (app name, backends) | per-program by design; sshLX has its own list (`engine_backends.c`) |
 | `unix/storage.c` (path) | its path logic already matches the requirement: `$PUTTYDIR`, else `$XDG_CONFIG_HOME/putty` (or `~/.config/putty`) if it exists, else `~/.putty`. If neither exists, PuTTY 0.85 creates `~/.putty`, and sshLX inherits that unchanged. |
 | `unix/serial.c` (EACCES message) | the error string from `serial_init` already contains `strerror(EACCES)`. sshLX detects that case from the engine's state and errno in the fatal event, then adds the dialout/uucp explanation in the UI |
 | `config.c` (Unix font panel) | the `dlg_fontsel_*` bridge maps PuTTY's `client:`/`server:` font strings to `QFontDialog` |
@@ -882,6 +887,7 @@ reviewed draft:
   It removes the need for Qt's private headers, and fixes an ADS
   use-after-free in a deferred `ensureWidgetVisible` when tabs are closed in
   quick succession. The GUI test suite triggered it.
-- **`uppity` and `puttygen`** are built for tests only, with PuTTY's own
-  CMake, out of tree in `build/_putty_tools`. Building them never writes
-  into the PuTTY tree; the `putty-untouched` test proves it.
+- **Tests** (`tests/`, with PuTTY's `uppity` and `puttygen` as fixtures)
+  were removed from the repository in 0.6; they remain in the git history
+  before v0.6. The `verify-putty` build target still checks that the PuTTY
+  tree is untouched.

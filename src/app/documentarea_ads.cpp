@@ -2,22 +2,72 @@
 #include "icons.h"
 
 #include <QBoxLayout>
+#include <QSplitter>
 #include <QToolButton>
 #include <QUuid>
 
 #include <DockAreaWidget.h>
+#include <DockComponentsFactory.h>
 #include <DockManager.h>
 #include <DockWidget.h>
+#include <DockWidgetTab.h>
 #include <FloatingDockContainer.h>
+#include <QMenu>
 
 #include "sessionwidget.h"
 #include "sshlx_engine.h"
 
 using namespace ads;
 
+namespace {
+
+// A session tab's right-click menu: the session's own commands above ADS's
+// Detach / Close / Close Others.
+class SessionTab : public CDockWidgetTab {
+public:
+    SessionTab(CDockWidget *dw, DocumentArea *docs) : CDockWidgetTab(dw), m_docs(docs) {}
+
+protected:
+    QMenu *buildContextMenu(QMenu *menu) override
+    {
+        if (!menu)
+            menu = new QMenu(this);
+        auto *s = qobject_cast<SessionWidget *>(dockWidget()->widget());
+        if (s && m_docs)
+            m_docs->buildTabMenu(s, menu);
+        CDockWidgetTab::buildContextMenu(menu);
+        // Icons for ADS's own entries, to match the rest of the menu.
+        for (QAction *a : menu->actions()) {
+            if (a->text() == QLatin1String("Detach"))
+                a->setIcon(Icons::get("float"));
+            else if (a->text() == QLatin1String("Close"))
+                a->setIcon(Icons::get("close"));
+        }
+        return menu;
+    }
+
+private:
+    QPointer<DocumentArea> m_docs;
+};
+
+class TabFactory : public CDockComponentsFactory {
+public:
+    explicit TabFactory(DocumentArea *docs) : m_docs(docs) {}
+    CDockWidgetTab *createDockWidgetTab(CDockWidget *dw) const override
+    {
+        return new SessionTab(dw, m_docs);
+    }
+
+private:
+    DocumentArea *m_docs;
+};
+
+} // namespace
+
 DocumentArea::DocumentArea(CDockManager *manager, QObject *parent)
     : QObject(parent), m_mgr(manager)
 {
+    m_mgr->setComponentsFactory(new TabFactory(this));
     connect(m_mgr, &CDockManager::focusedDockWidgetChanged, this,
             [this](CDockWidget *, CDockWidget *now) {
         auto *s = now ? qobject_cast<SessionWidget *>(now->widget()) : nullptr;
@@ -129,6 +179,56 @@ QList<SessionWidget *> DocumentArea::sessions() const
     return r;
 }
 
+void DocumentArea::buildTabMenu(SessionWidget *s, QMenu *menu)
+{
+    QPointer<SessionWidget> ps(s);
+    CDockWidget *dw = m_docks.value(s);
+    const bool local = s->protocol() == SessionWidget::protocolId("localshell");
+    const sshlx_state st = s->state();
+
+    if (st == SSHLX_STATE_DISCONNECTED) {
+        menu->addAction(Icons::get("reconnect"), local ? tr("&Restart Shell") : tr("&Reconnect"),
+                        s, &SessionWidget::reconnect);
+    } else {
+        // Reconnecting a live session: drop it first, then connect again.
+        menu->addAction(Icons::get("reconnect"), local ? tr("&Restart Shell") : tr("&Reconnect"),
+                        s, [ps] {
+            if (!ps)
+                return;
+            ps->disconnectSession();
+            ps->reconnect();
+        });
+        menu->addAction(Icons::get("disconnect"), tr("&Disconnect"), s,
+                        &SessionWidget::disconnectSession);
+    }
+    menu->addAction(Icons::get("connection-new"), tr("D&uplicate"), s,
+                    [ps] { if (ps) emit ps->duplicateRequested(ps->displayName()); });
+    menu->addSeparator();
+    s->buildAppearanceMenu(menu->addMenu(Icons::get("palette"), tr("&Appearance")));
+    menu->addAction(Icons::get("settings"), tr("Change &Settings..."), s,
+                    &SessionWidget::changeSettings);
+    menu->addAction(Icons::get("event-log"), tr("&Event Log"), s, &SessionWidget::showEventLog);
+    menu->addSeparator();
+    // Split and re-attach act on the current tab: make this one current.
+    const bool splittable = dw && dw->dockAreaWidget()
+        && dw->dockAreaWidget()->dockWidgetsCount() > 1;
+    QAction *right = menu->addAction(Icons::get("split-right"), tr("Split &Right"), this,
+                                     [this, ps] {
+        if (ps) { activate(ps); splitCurrent(Qt::Horizontal); }
+    });
+    QAction *down = menu->addAction(Icons::get("split-down"), tr("Split &Down"), this,
+                                    [this, ps] {
+        if (ps) { activate(ps); splitCurrent(Qt::Vertical); }
+    });
+    right->setEnabled(splittable);
+    down->setEnabled(splittable);
+    if (dw && dw->isInFloatingContainer())
+        menu->addAction(Icons::get("attach"), tr("Re-&attach to Main Window"), this, [this, ps] {
+            if (ps) { activate(ps); attachCurrent(); }
+        });
+    menu->addSeparator();
+}
+
 void DocumentArea::activate(SessionWidget *s)
 {
     CDockWidget *dw = m_docks.value(s);
@@ -223,6 +323,82 @@ void DocumentArea::setSidePanels(const QList<CDockWidget *> &panels)
         m_sidePanels << dw;
 }
 
+void DocumentArea::setSidePanelsRight(bool right)
+{
+    m_panelsRight = right;
+    // Panels docked in the main window (closed ones too, so that they
+    // reopen on the new side), top to bottom; floating ones stay put.
+    QList<CDockWidget *> docked;
+    for (CDockWidget *dw : m_sidePanels)
+        if (dw && dw->dockAreaWidget() && !dw->isInFloatingContainer())
+            docked << dw;
+    if (docked.isEmpty())
+        return;
+    auto top = [](CDockWidget *dw) {
+        return dw->dockAreaWidget()->mapTo(dw->dockAreaWidget()->window(), QPoint()).y();
+    };
+    std::stable_sort(docked.begin(), docked.end(),
+                     [&](CDockWidget *a, CDockWidget *b) { return top(a) < top(b); });
+
+    // Panels sharing an area stay tabbed together; remember what was shown.
+    QList<CDockAreaWidget *> oldAreas;
+    QList<CDockWidget *> shown;
+    QList<int> heights;
+    int width = 0;
+    for (CDockWidget *dw : docked) {
+        CDockAreaWidget *a = dw->dockAreaWidget();
+        if (oldAreas.contains(a))
+            continue;
+        oldAreas << a;
+        shown << a->currentDockWidget();
+        heights << a->height();
+        if (a->isVisible())
+            width = std::max(width, a->width());
+    }
+    QHash<CDockWidget *, bool> closed;
+    for (CDockWidget *dw : docked)
+        closed[dw] = dw->isClosed();
+
+    QList<CDockAreaWidget *> newAreas(oldAreas.size(), nullptr);
+    for (CDockWidget *dw : docked) {
+        const int g = oldAreas.indexOf(dw->dockAreaWidget());
+        if (newAreas[g])
+            m_mgr->addDockWidgetTabToArea(dw, newAreas[g]);
+        else if (g > 0 && newAreas[g - 1])
+            newAreas[g] = m_mgr->addDockWidget(BottomDockWidgetArea, dw, newAreas[g - 1]);
+        else
+            newAreas[g] = m_mgr->addDockWidget(right ? RightDockWidgetArea : LeftDockWidgetArea, dw);
+    }
+    for (CDockWidget *dw : docked)
+        if (closed[dw])
+            dw->toggleView(false);
+    for (int g = 0; g < newAreas.size(); ++g)
+        if (newAreas[g] && shown[g])
+            newAreas[g]->setCurrentDockWidget(shown[g]);
+
+    if (newAreas.size() > 1)
+        m_mgr->setSplitterSizes(newAreas.first(), heights);
+    // The column's width: the first horizontal splitter above the column.
+    for (QWidget *w = newAreas.first(); width > 0 && w && w->parentWidget(); w = w->parentWidget()) {
+        auto *sp = qobject_cast<QSplitter *>(w->parentWidget());
+        if (!sp || sp->orientation() != Qt::Horizontal)
+            continue;
+        QList<int> sizes = sp->sizes();
+        const int i = sp->indexOf(w);
+        int total = 0;
+        for (int v : sizes)
+            total += v;
+        const int rest = total - sizes[i];
+        if (sizes.size() > 1 && rest > 0 && total > width) {
+            for (int &v : sizes)
+                v = v * (total - width) / rest;
+            sizes[i] = width;
+            sp->setSizes(sizes);
+        }
+        break;
+    }
+}
+
 CDockAreaWidget *DocumentArea::sidePanelArea(CDockWidget *except) const
 {
     // A docked area of the main window (the manager lists only its own
@@ -266,8 +442,9 @@ void DocumentArea::attach(CFloatingDockContainer *fc)
                                      ? TopDockWidgetArea : BottomDockWidgetArea,
                                  dw, beside);
         } else {
-            // The only side panel: left of the session area, as it starts out.
-            m_mgr->addDockWidget(LeftDockWidgetArea, dw, targetArea(QString()));
+            // The only side panel: beside the session area, on the panels' side.
+            m_mgr->addDockWidget(m_panelsRight ? RightDockWidgetArea : LeftDockWidgetArea,
+                                 dw, targetArea(QString()));
         }
     }
 }

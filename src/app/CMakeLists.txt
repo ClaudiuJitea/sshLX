@@ -9,7 +9,7 @@ add_library(sshlx-model STATIC model/connectiontree.cpp model/serialrules.cpp)
 target_include_directories(sshlx-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/model)
 target_link_libraries(sshlx-model PUBLIC Qt6::Core)
 
-# Everything but main() is a library so the GUI tests can link it.
+# Everything but main() is a library, linked into the sshLX executable.
 add_library(sshlx-app STATIC
   qthostloop.cpp
   fontspec.cpp
@@ -20,6 +20,7 @@ add_library(sshlx-app STATIC
   eventlogdialog.cpp
   settingsdialog.cpp
   sessionwidget.cpp
+  terminallook.cpp
   documentarea.h
   documentarea_ads.cpp
   connectionstore.cpp

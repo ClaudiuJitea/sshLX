@@ -50,6 +50,10 @@ public:
     QString closeWarning() const;
 
     void buildContextMenu(QMenu *menu);
+    // Colour scheme, font and cursor, changed live on this tab.
+    void buildAppearanceMenu(QMenu *menu);
+    // Applies edit to a copy of the session's conf and reconfigures with it.
+    void changeConf(const std::function<void(sshlx_conf *)> &edit);
     void showEventLog();
     void changeSettings();
     void copy();
@@ -66,6 +70,8 @@ public:
     void setPasswordLookup(PasswordLookup f);
 
     static QIcon iconForProtocol(int proto);
+    // A back end's PuTTY protocol number from its id ("serial", "localshell"...).
+    static int protocolId(const char *name);
 
 signals:
     void titleChanged(const QString &title);
@@ -76,6 +82,10 @@ signals:
     void exitedWithClose();
     // What the tab can be reopened from changed (for the crash breadcrumb).
     void identityChanged();
+    // Appearance menu: keep this tab's look for its connection, or for
+    // every new session.
+    void saveAppearanceRequested();
+    void defaultAppearanceRequested();
 
 private:
     friend struct SessionTrampolines;

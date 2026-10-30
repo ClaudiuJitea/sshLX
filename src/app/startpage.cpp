@@ -44,8 +44,8 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
     outer->addWidget(title);
     outer->addSpacing(2);
 
-    auto *sub = new QLabel(tr("SSH, Telnet, Rlogin, SUPDUP, Raw and serial sessions "
-                              "on the PuTTY core"));
+    auto *sub = new QLabel(tr("SSH, Telnet, Rlogin, SUPDUP, Raw, serial and local "
+                              "sessions on the PuTTY core"));
     sub->setObjectName("StartMuted");
     sub->setAlignment(Qt::AlignCenter);
     sub->setWordWrap(true);
@@ -100,10 +100,10 @@ StartPage::StartPage(QWidget *parent) : QWidget(parent)
     };
     card("start-new", tr("New connection"), tr("Add a connection to the tree"),
          &StartPage::newConnection, 0, 0);
+    card("start-local", tr("Local shell"), tr("A terminal on this computer"),
+         &StartPage::localShell, 0, 1);
     card("start-quick", tr("Quick connect"), tr("PuTTY's dialog, without saving"),
-         &StartPage::quickConnect, 0, 1);
-    card("start-import", tr("Import PuTTY sessions"), tr("Bring saved sessions into the tree"),
-         &StartPage::importSessions, 1, 0);
+         &StartPage::quickConnect, 1, 0);
     card("start-options", tr("Options"), tr("Theme, shortcuts, serial, passwords"),
          &StartPage::options, 1, 1);
     // A button's size hint ignores the layout inside it: size the cards to

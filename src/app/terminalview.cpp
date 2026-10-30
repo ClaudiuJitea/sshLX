@@ -132,7 +132,6 @@ void TerminalView::updateGrid()
     bool changed = (cols != m_cols || rows != m_rows);
     m_cols = cols;
     m_rows = rows;
-    m_text = QVector<QVector<char32_t>>(rows, QVector<char32_t>(cols, U' '));
     if (m_session) {
         if (changed)
             sshlx_session_resize(m_session, cols, rows);
@@ -286,36 +285,6 @@ void TerminalView::drawText(int col, int row, int ncells, const uint32_t *text,
     }
     p.restore();
     m_dirty |= cellRect;
-
-    // Keep the text mirror up to date.
-    if (row >= 0 && row < m_text.size()) {
-        QVector<char32_t> &line = m_text[row];
-        int step = (st->line_attr != SSHLX_LINE_NORMAL ? 2 : 1) * cellsPerChar;
-        for (int i = 0; i < ncells && col + i < line.size(); i++)
-            line[col + i] = ' ';
-        int n = combining ? 1 : len;
-        for (int i = 0; i < n; i++) {
-            int c = col + i * step;
-            if (c >= 0 && c < line.size())
-                line[c] = text[i];
-        }
-    }
-}
-
-QString TerminalView::rowText(int row) const
-{
-    if (row < 0 || row >= m_text.size())
-        return {};
-    const QVector<char32_t> &l = m_text[row];
-    return QString::fromUcs4(l.constData(), l.size());
-}
-
-QString TerminalView::screenText() const
-{
-    QStringList rows;
-    for (int r = 0; r < m_text.size(); r++)
-        rows << rowText(r);
-    return rows.join('\n');
 }
 
 void TerminalView::drawCursorShape(int col, int row, int ncells, int shape,
@@ -523,6 +492,17 @@ void TerminalView::wheelEvent(QWheelEvent *e)
 {
     if (!m_session)
         return;
+    // Ctrl+wheel zooms, as in most terminals; one step per notch, so a
+    // touchpad's many small deltas add up first.
+    if (e->modifiers() == Qt::ControlModifier && e->angleDelta().y()) {
+        m_zoomWheel += e->angleDelta().y();
+        while (qAbs(m_zoomWheel) >= 120) {
+            emit fontSizeStep(m_zoomWheel > 0 ? +1 : -1);
+            m_zoomWheel -= m_zoomWheel > 0 ? 120 : -120;
+        }
+        e->accept();
+        return;
+    }
     QPoint cell = cellAt(e->position());
     // GDK smooth-scroll deltas are 1.0 per notch; Qt's angleDelta is 120.
     double dx = -e->angleDelta().x() / 120.0;

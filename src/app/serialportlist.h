@@ -5,6 +5,7 @@
 
 #include <QList>
 #include <QObject>
+#include <functional>
 #include <QString>
 
 struct sd_monitor;
@@ -29,9 +30,7 @@ public:
         QString stablePath() const { return byId.isEmpty() ? node : byId; }
     };
 
-    // Pass sysfsRoot/devRoot only in tests.
-    explicit SerialPortList(QObject *parent = nullptr, bool allowUdev = true,
-                            const QString &sysfsRoot = {}, const QString &devRoot = {});
+    explicit SerialPortList(QObject *parent = nullptr, bool allowUdev = true);
     ~SerialPortList() override;
 
     int count() const { return m_devices.size(); }
@@ -39,6 +38,10 @@ public:
     const QList<Device> &devices() const { return m_devices; }
     QString backend() const;
     void rescan();
+    // Devices for which this returns true are left out of the list and
+    // report no hot-plug events. Call refilter() when its answer changes.
+    void setHiddenFilter(std::function<bool(const Device &)> hidden);
+    void refilter();
 
 signals:
     void aboutToChange();
@@ -57,4 +60,5 @@ private:
     QTimer *m_settle = nullptr;
     QList<Device> m_devices;
     QList<QPair<int, Device>> m_pending;
+    std::function<bool(const Device &)> m_hidden;
 };

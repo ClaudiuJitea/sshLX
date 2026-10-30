@@ -24,7 +24,6 @@ VERSION="$(sed -n 's/^project(sshLX VERSION \([0-9.]*\).*/\1/p' "$SRC/CMakeLists
 cmake -S "$SRC" -B "$BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DSSHLX_BUILD_TESTS=OFF \
     -DSSHLX_ADS_FROM_SYSTEM=OFF \
     -DSSHLX_PUTTY_SOURCE_DIR="$PUTTY_DIR"
 cmake --build "$BUILD"

@@ -4,6 +4,8 @@
 add_library(sshlx-engine STATIC
   engine_session.c
   engine_conf.c
+  engine_shell.c
+  engine_backends.c
   frontend/fe_hostloop.c
   frontend/fe_platform.c
   frontend/fe_seat.c

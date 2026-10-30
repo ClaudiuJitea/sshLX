@@ -217,7 +217,8 @@ QWidget *OptionsDialog::buildSerial()
         m_rules->insertRow(row);
         m_rules->setItem(row, 0, new QTableWidgetItem(r.label));
         m_rules->setItem(row, 1, new QTableWidgetItem(
-            r.action == SerialRule::AutoConnect ? tr("Connect automatically")
+            r.hidden ? tr("Hidden from the list")
+            : r.action == SerialRule::AutoConnect ? tr("Connect automatically")
             : r.action == SerialRule::Ignore ? tr("Ignore") : tr("Ask")));
         m_rules->setItem(row, 2, new QTableWidgetItem(
             QStringLiteral("%1 %2%3%4").arg(r.speed > 0 ? QString::number(r.speed) : tr("auto"))
@@ -237,14 +238,17 @@ QWidget *OptionsDialog::buildSerial()
             return;
         m_main->serialManager()->rules().remove(m_rules->item(row, 3)->text());
         m_main->serialManager()->saveRules();
+        m_main->serialManager()->ports()->refilter();   // a hidden port shows again
         m_rules->removeRow(row);
     });
     auto *rules = new QVBoxLayout;
     rules->setSpacing(10);
     rules->addWidget(hint(m_rules->rowCount()
-                              ? tr("What happens when each known device is plugged in.")
+                              ? tr("What happens when each known device is plugged in. "
+                                   "Removing a rule also shows a hidden port again.")
                               : tr("No rules yet. Choose \"Always connect\" or \"Never ask\" "
-                                   "when a device is detected to create one.")));
+                                   "when a device is detected, or \"Hide Port\" in the "
+                                   "Serial Ports list, to create one.")));
     rules->addWidget(m_rules, 1);
     auto *row = new QHBoxLayout;
     row->addWidget(del);

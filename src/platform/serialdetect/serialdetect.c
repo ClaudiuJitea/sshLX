@@ -164,6 +164,47 @@ static void find_by_id(sd_device *d, const char *dev_root)
     closedir(dp);
 }
 
+/* The kernel driver behind a tty. Since Linux 6.5 a UART's tty hangs off
+ * generic serial-base "port"/"ctrl" devices; the real driver (8250_pci's
+ * "serial", "dw-apb-uart"...) sits on an ancestor. Non-USB ports also get a
+ * product name when they are recognisably special. */
+static void fill_driver(sd_device *d, const char *devdir)
+{
+    char cur[PATH_MAX];
+    if (!realpath(devdir, cur))
+        return;
+    for (int depth = 0; depth < 4; depth++) {
+        char drv[PATH_MAX], target[PATH_MAX];
+        snprintf(drv, sizeof(drv), "%s/driver", cur);
+        if (realpath(drv, target)) {
+            const char *b = strrchr(target, '/');
+            b = b ? b + 1 : target;
+            if (strstr(target, "/bus/serial-base/")) {
+                if (!d->driver[0])
+                    snprintf(d->driver, sizeof(d->driver), "%s", b);
+            } else {
+                snprintf(d->driver, sizeof(d->driver), "%s", b);
+                break;
+            }
+        }
+        char *slash = strrchr(cur, '/');
+        if (!slash || slash == cur)
+            return;
+        *slash = '\0';
+    }
+    /* Intel AMT's Serial-over-LAN port is the PCI function 16.3 (next to
+     * the ME's HECI at 16.0): a console for remote management, not a
+     * connector on the machine. */
+    char vendor[16], cls[16];
+    const char *slot = strrchr(cur, '/');
+    slot = slot ? slot + 1 : cur;
+    size_t len = strlen(slot);
+    if (read_attr(cur, "vendor", vendor, sizeof(vendor)) && !strcmp(vendor, "0x8086") &&
+        read_attr(cur, "class", cls, sizeof(cls)) && !strncmp(cls, "0x0700", 6) &&
+        len > 5 && !strcmp(slot + len - 5, ":16.3"))
+        snprintf(d->product, sizeof(d->product), "Intel AMT Serial-over-LAN");
+}
+
 static int cmp_dev(const void *a, const void *b)
 {
     return strcmp(((const sd_device *)a)->name, ((const sd_device *)b)->name);
@@ -206,12 +247,7 @@ size_t sd_scan(const char *sysfs_root, const char *dev_root, sd_device **out)
         snprintf(d->name, sizeof(d->name), "%s", e->d_name);
         snprintf(d->devnode, sizeof(d->devnode), "%s/%s", dev_root, e->d_name);
         if (has_device) {
-            char drv[PATH_MAX], target[PATH_MAX];
-            snprintf(drv, sizeof(drv), "%s/driver", devdir);
-            if (realpath(drv, target)) {
-                const char *b = strrchr(target, '/');
-                snprintf(d->driver, sizeof(d->driver), "%s", b ? b + 1 : target);
-            }
+            fill_driver(d, devdir);
             fill_usb(d, devdir);
         }
         find_by_id(d, dev_root);

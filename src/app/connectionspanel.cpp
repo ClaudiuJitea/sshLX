@@ -331,6 +331,8 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
         menu.addAction(Icons::get("settings"), tr("Connect with &Options..."), this,
                        [this, row] { emit openSerialRequested(row, true); });
         menu.addAction(Icons::get("usb"), tr("Device &Rule..."), this, [this, row] { emit serialRuleRequested(row); });
+        menu.addSeparator();
+        menu.addAction(tr("&Hide Port"), this, [this, row] { emit serialHideRequested(row); });
         menu.exec(m_view->viewport()->mapToGlobal(pos));
         return;
     }

@@ -30,6 +30,7 @@ QJsonObject SerialRule::toJson() const
     o["stopHalfBits"] = stopHalfBits;
     o["flow"] = flow;
     o["autoReconnect"] = autoReconnect;
+    if (hidden) o["hidden"] = true;
     return o;
 }
 
@@ -47,6 +48,7 @@ SerialRule SerialRule::fromJson(const QJsonObject &o)
     r.stopHalfBits = o["stopHalfBits"].toInt(2);
     r.flow = o["flow"].toInt(0);
     r.autoReconnect = o["autoReconnect"].toBool(true);
+    r.hidden = o["hidden"].toBool(false);
     return r;
 }
 

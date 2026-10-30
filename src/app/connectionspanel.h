@@ -39,6 +39,7 @@ signals:
     void openWithOptionsRequested(ConnectionNode *n);
     void openSerialRequested(int deviceRow, bool withOptions);
     void serialRuleRequested(int deviceRow);
+    void serialHideRequested(int deviceRow);
     void currentNodeChanged(ConnectionNode *n);
 
 private:

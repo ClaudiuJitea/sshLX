@@ -88,6 +88,9 @@ void sshlx_conf_free(sshlx_conf *conf)
 
 bool sshlx_conf_launchable(const sshlx_conf *conf)
 {
+    /* The local shell needs no host name. */
+    if (conf_get_int(CONF_OF(conf), CONF_protocol) == SSHLX_PROT_LOCALSHELL)
+        return true;
     return conf_launchable(CONF_OF(conf));
 }
 

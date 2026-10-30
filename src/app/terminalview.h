@@ -44,9 +44,6 @@ public:
     void setCursorCell(int col, int row);
     void setInitialGrid(int cols, int rows) { m_hintCols = cols; m_hintRows = rows; }
     bool usedFallbackFont() const { return m_fallbackFont; }
-    // Plain text of a screen row as last drawn (tests, accessibility).
-    QString rowText(int row) const;
-    QString screenText() const;
 
     // Engine draw callbacks (forwarded by SessionWidget).
     bool beginDraw();
@@ -113,5 +110,5 @@ private:
     int m_clickCount = 0;
     Qt::MouseButton m_lastClickButton = Qt::NoButton;
     QByteArray m_keyText;
-    QVector<QVector<char32_t>> m_text;   // mirror of drawn characters
+    int m_zoomWheel = 0;   // Ctrl+wheel angle not yet turned into a font step
 };

@@ -43,9 +43,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.5.1_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.6.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.5.1-x86_64.AppImage && ./sshLX-0.5.1-x86_64.AppImage
+chmod +x sshLX-0.6.0-x86_64.AppImage && ./sshLX-0.6.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
@@ -61,12 +61,11 @@ tools/fetch-putty.sh              # PuTTY 0.85 source into ../putty-0.85, checks
 cmake -S . -B build -G Ninja
 cmake --build build
 ./build/sshLX
-cd build && ctest                 # engine, sessions, GUI, serial and model tests
 ```
 
 `tools/package.sh` builds the `.deb` and the AppImage into `dist/`.
 
-The PuTTY tree is only ever read. Its sha256 manifest is checked by `tools/verify-putty-untouched.sh` and by a test.
+The PuTTY tree is only ever read. Its sha256 manifest is checked by `tools/verify-putty-untouched.sh` (also `cmake --build build --target verify-putty`).
 
 ## How it works
 
@@ -75,7 +74,7 @@ sshLX doesn't launch `putty`. PuTTY's own code is compiled in, unchanged:
 - the terminal emulator and cryptography;
 - configuration and session storage.
 
-sshLX replaces only the GTK front end, with a small C engine API and a Qt UI. One PuTTY file has a documented override that fixes three serial bugs. See [ARCHITECTURE-NOTES.md](ARCHITECTURE-NOTES.md) and [PUTTY-OVERRIDES.md](PUTTY-OVERRIDES.md).
+sshLX replaces only the GTK front end, with a small C engine API and a Qt UI. It adds one back end of its own: **Local shell** (File → New Local Shell, Ctrl+Shift+T), your login shell in a pseudo-terminal on this machine. One PuTTY file has a documented override that fixes three serial bugs. See [ARCHITECTURE-NOTES.md](ARCHITECTURE-NOTES.md) and [PUTTY-OVERRIDES.md](PUTTY-OVERRIDES.md).
 
 | Data | Location |
 |---|---|

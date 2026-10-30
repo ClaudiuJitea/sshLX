@@ -19,6 +19,11 @@
 #define CONF_OF(c)  ((Conf *)(c))
 #define SCONF_OF(c) ((sshlx_conf *)(c))
 
+/* ---- local shell back end (engine_shell.c) --------------------------- */
+/* Outside PuTTY's PROT_* range, so it can never clash with a PuTTY one. */
+#define SSHLX_PROT_LOCALSHELL 64
+extern const BackendVtable sshlx_localshell_backend;
+
 /* ---- host loop / process-global state (fe_hostloop.c) ---------------- */
 extern sshlx_host_loop sshlx_loop;
 extern sshlx_global_cb sshlx_global_callback;

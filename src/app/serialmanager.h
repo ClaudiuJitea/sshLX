@@ -43,8 +43,7 @@ private:
 class SerialManager : public QObject {
     Q_OBJECT
 public:
-    SerialManager(MainWindow *main, QToolBar *bannerBar, bool allowUdev = true,
-                  const QString &sysfsRoot = {}, const QString &devRoot = {});
+    SerialManager(MainWindow *main, QToolBar *bannerBar, bool allowUdev = true);
 
     SerialPortList *ports() const { return m_ports; }
     SerialRules &rules() { return m_rules; }
@@ -58,6 +57,9 @@ public:
     // probed first (in the background), so the tab appears a moment later.
     void openDevice(const SerialPortList::Device &d, bool withOptions = false);
     void editRule(const SerialPortList::Device &d);
+    // Hides the device from the Serial Ports list (a rule with "hidden");
+    // removing that rule in Options shows it again.
+    void hideDevice(const SerialPortList::Device &d);
     DeviceBanner *banner() const { return m_banner; }
     bool deviceBoundTo(const SessionWidget *s, const SerialPortList::Device &d) const;
 

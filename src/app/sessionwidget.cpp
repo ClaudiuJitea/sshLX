@@ -2,7 +2,9 @@
 #include "icons.h"
 
 #include <QApplication>
+#include <QActionGroup>
 #include <QClipboard>
+#include <QFontDialog>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QLabel>
@@ -20,6 +22,7 @@
 #include "fontspec.h"
 #include "promptbar.h"
 #include "settingsdialog.h"
+#include "terminallook.h"
 #include "terminalview.h"
 
 // ---------------------------------------------------------------------------
@@ -171,7 +174,7 @@ struct SessionTrampolines {
 };
 
 // ---------------------------------------------------------------------------
-static int protocolId(const char *name)
+int SessionWidget::protocolId(const char *name)
 {
     for (size_t i = 0; i < sshlx_protocol_count(); i++)
         if (!strcmp(sshlx_protocol_get(i)->name, name))
@@ -396,8 +399,11 @@ void SessionWidget::onExited(int code, bool closeRequested)
     updateReconnectBar();
     QSettings st;
     // PuTTY closes the window here; sshLX keeps the tab unless the user
-    // opted into PuTTY's behaviour.
-    if (closeRequested && st.value("behaviour/closeTabOnExit", false).toBool())
+    // opted into PuTTY's behaviour. A local shell left with "exit" closes,
+    // as in any terminal.
+    const bool local = protocol() == protocolId("localshell");
+    if (closeRequested && (st.value("behaviour/closeTabOnExit", false).toBool()
+                           || (local && code == 0)))
         emit exitedWithClose();
 }
 
@@ -409,7 +415,9 @@ void SessionWidget::updateReconnectBar()
         m_reconnectBar->setVisible(false);
         return;
     }
-    QString text = tr("<b>Disconnected.</b>");
+    const bool local = protocol() == protocolId("localshell");
+    m_reconnectButton->setText(local ? tr("&Restart") : tr("&Reconnect"));
+    QString text = local ? tr("<b>Shell ended.</b>") : tr("<b>Disconnected.</b>");
     if (!m_lastError.isEmpty())
         text += " " + m_lastError.toHtmlEscaped().replace("\n", "<br>");
     if (m_lastErrno == EACCES && protocol() == protocolId("serial")) {
@@ -482,16 +490,116 @@ void SessionWidget::requestPaste(int clip)
 
 void SessionWidget::fontStep(int delta)
 {
+    changeConf([delta](sshlx_conf *c) {
+        for (const char *k : {"Font", "BoldFont", "WideFont", "WideBoldFont"}) {
+            int key = sshlx_conf_key_find(k);
+            QString name = QString::fromUtf8(sshlx_conf_get_str(c, key));
+            if (!name.isEmpty())
+                sshlx_conf_set_str(c, key, FontSpec::resized(name, delta).toUtf8().constData());
+        }
+    });
+}
+
+void SessionWidget::changeConf(const std::function<void(sshlx_conf *)> &edit)
+{
     sshlx_conf *c = sshlx_conf_copy(conf());
-    for (const char *k : {"Font", "BoldFont", "WideFont", "WideBoldFont"}) {
-        int key = sshlx_conf_key_find(k);
-        QString name = QString::fromUtf8(sshlx_conf_get_str(c, key));
-        if (!name.isEmpty())
-            sshlx_conf_set_str(c, key, FontSpec::resized(name, delta).toUtf8().constData());
-    }
+    edit(c);
     sshlx_session_reconfigure(m_session, c);
     sshlx_conf_free(c);
     applyConfToView();
+}
+
+void SessionWidget::buildAppearanceMenu(QMenu *menu)
+{
+    QPointer<SessionWidget> self(this);
+
+    QMenu *schemes = menu->addMenu(Icons::get("palette"), tr("&Colour Scheme"));
+    auto *group = new QActionGroup(schemes);
+    const int current = TerminalLook::currentScheme(conf());
+    for (int i = 0; i < TerminalLook::schemes().size(); i++) {
+        const TerminalLook::Scheme &s = TerminalLook::schemes()[i];
+        QAction *a = schemes->addAction(TerminalLook::swatch(s), s.name, this, [self, i] {
+            if (self)
+                self->changeConf([i](sshlx_conf *c) {
+                    TerminalLook::applyScheme(c, TerminalLook::schemes()[i]);
+                });
+        });
+        a->setCheckable(true);
+        a->setChecked(i == current);
+        // With an icon, styles draw no check mark: show the current one in bold.
+        if (i == current) {
+            QFont f = a->font();
+            f.setBold(true);
+            a->setFont(f);
+        }
+        group->addAction(a);
+    }
+    if (current < 0) {
+        schemes->addSeparator();
+        QAction *custom = schemes->addAction(tr("Custom (from settings)"));
+        custom->setCheckable(true);
+        custom->setChecked(true);
+        custom->setEnabled(false);
+    }
+
+    const QFont font = FontSpec::fromPutty(
+        QString::fromUtf8(sshlx_conf_get_str(conf(), sshlx_conf_key_find("Font")))).font;
+    QMenu *text = menu->addMenu(tr("&Text"));
+    text->addAction(tr("&Larger"), this, [this] { fontStep(+1); });
+    text->addAction(tr("&Smaller"), this, [this] { fontStep(-1); });
+    text->addSeparator();
+    text->addAction(tr("&Font... (%1, %2 pt)").arg(font.family()).arg(font.pointSize()), this,
+                    [self, font] {
+        if (!self)
+            return;
+        bool ok = false;
+        QFont f = QFontDialog::getFont(&ok, font, self->window(), tr("Terminal Font"),
+                                       QFontDialog::MonospacedFonts);
+        if (!ok || !self)
+            return;
+        const QString name = FontSpec::toPutty(f);
+        self->changeConf([name](sshlx_conf *c) {
+            sshlx_conf_set_str(c, sshlx_conf_key_find("Font"), name.toUtf8().constData());
+            // Bold variants of the old font would no longer match.
+            sshlx_conf_set_str(c, sshlx_conf_key_find("BoldFont"), "");
+            sshlx_conf_set_str(c, sshlx_conf_key_find("WideBoldFont"), "");
+        });
+    });
+
+    QMenu *cursor = menu->addMenu(tr("C&ursor"));
+    auto *shapes = new QActionGroup(cursor);
+    const int type = sshlx_conf_get_int(conf(), sshlx_conf_key_find("cursor_type"));
+    const QStringList names{tr("&Block"), tr("&Underline"), tr("&Vertical Line")};
+    for (int i = 0; i < names.size(); i++) {
+        QAction *a = cursor->addAction(names[i], this, [self, i] {
+            if (self)
+                self->changeConf([i](sshlx_conf *c) {
+                    sshlx_conf_set_int(c, sshlx_conf_key_find("cursor_type"), i);
+                });
+        });
+        a->setCheckable(true);
+        a->setChecked(type == i);
+        shapes->addAction(a);
+    }
+    cursor->addSeparator();
+    QAction *blink = cursor->addAction(tr("Blin&king"));
+    blink->setCheckable(true);
+    blink->setChecked(sshlx_conf_get_bool(conf(), sshlx_conf_key_find("blink_cur")));
+    connect(blink, &QAction::toggled, this, [self](bool on) {
+        if (self)
+            self->changeConf([on](sshlx_conf *c) {
+                sshlx_conf_set_bool(c, sshlx_conf_key_find("blink_cur"), on);
+            });
+    });
+
+    menu->addSeparator();
+    QAction *save = menu->addAction(Icons::get("save"), tr("Save to &Connection"), this,
+                                    &SessionWidget::saveAppearanceRequested);
+    save->setEnabled(!m_connectionId.isEmpty());
+    if (m_connectionId.isEmpty())
+        save->setToolTip(tr("This tab was not opened from the connection tree."));
+    menu->addAction(tr("Use for &New Sessions"), this,
+                    &SessionWidget::defaultAppearanceRequested);
 }
 
 void SessionWidget::copy() { sshlx_session_copy(m_session, SSHLX_CLIP_CLIPBOARD); }
@@ -570,6 +678,7 @@ void SessionWidget::buildContextMenu(QMenu *menu)
             }
         }
     }
+    buildAppearanceMenu(menu->addMenu(Icons::get("palette"), tr("&Appearance")));
     menu->addAction(Icons::get("event-log"), tr("&Event Log"), this, &SessionWidget::showEventLog);
     menu->addAction(Icons::get("settings"), tr("Change &Settings..."), this, &SessionWidget::changeSettings);
     QAction *restart = menu->addAction(Icons::get("reconnect"), tr("R&estart Session"), this, &SessionWidget::reconnect);

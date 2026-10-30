@@ -57,18 +57,14 @@ QString SerialPortList::Device::tooltip() const
     return l.join("<br>");
 }
 
-SerialPortList::SerialPortList(QObject *parent, bool allowUdev,
-                               const QString &sysfsRoot, const QString &devRoot)
+SerialPortList::SerialPortList(QObject *parent, bool allowUdev)
     : QObject(parent)
 {
-    QByteArray s = sysfsRoot.toUtf8(), d = devRoot.toUtf8();
     m_mon = sd_monitor_new(
         [](void *ctx, sd_event ev, const sd_device *dev) {
             cb(ctx, int(ev), dev);
         },
-        this, allowUdev ? 0 : SD_FLAG_NO_UDEV,
-        sysfsRoot.isEmpty() ? nullptr : s.constData(),
-        devRoot.isEmpty() ? nullptr : d.constData());
+        this, allowUdev ? 0 : SD_FLAG_NO_UDEV, nullptr, nullptr);
     int fd = sd_monitor_fd(m_mon);
     if (fd >= 0) {
         m_notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
@@ -110,8 +106,24 @@ void SerialPortList::reload()
     const sd_device *list;
     size_t n = sd_monitor_list(m_mon, &list);
     m_devices.clear();
-    for (size_t i = 0; i < n; i++)
-        m_devices.append(fromC(&list[i]));
+    for (size_t i = 0; i < n; i++) {
+        Device d = fromC(&list[i]);
+        if (!m_hidden || !m_hidden(d))
+            m_devices.append(d);
+    }
+}
+
+void SerialPortList::setHiddenFilter(std::function<bool(const Device &)> hidden)
+{
+    m_hidden = std::move(hidden);
+    refilter();
+}
+
+void SerialPortList::refilter()
+{
+    emit aboutToChange();
+    reload();
+    emit changed();
 }
 
 void SerialPortList::dispatch()
@@ -124,6 +136,8 @@ void SerialPortList::dispatch()
         reload();
         emit changed();
         for (const auto &e : events) {
+            if (m_hidden && m_hidden(e.second))
+                continue;
             if (e.first == SD_ADDED)
                 emit deviceAdded(e.second);
             else
@@ -145,6 +159,8 @@ void SerialPortList::rescan()
     reload();
     emit changed();
     for (const auto &e : events) {
+        if (m_hidden && m_hidden(e.second))
+            continue;
         if (e.first == SD_ADDED)
             emit deviceAdded(e.second);
         else
