@@ -880,9 +880,10 @@ reviewed draft:
 - **Serial auto-connect template:** 115200 8N1 with **no flow control**.
   PuTTY's own default is XON/XOFF, which would swallow ^S/^Q on typical USB
   consoles; it's editable per device rule.
-- **Keyring:** with `libsecret-1-dev` present at build time, QtKeychain
-  uses GNOME Keyring / Secret Service; otherwise only KWallet. QtKeychain's
-  plaintext fallback is never enabled.
+- **Keyring:** `libsecret-1-dev` is required at build time for the fetched
+  QtKeychain (GNOME Keyring / Secret Service); configure fails without it
+  unless `-DSSHLX_KEYCHAIN=OFF`, because the result would fail every keyring
+  job on GNOME. QtKeychain's plaintext fallback is never enabled.
 - **Qt ADS** is built with a patch (`cmake/patches/qtads-public-x11.cmake`).
   It removes the need for Qt's private headers, and fixes an ADS
   use-after-free in a deferred `ensureWidgetVisible` when tabs are closed in

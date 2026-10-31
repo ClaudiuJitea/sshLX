@@ -132,6 +132,7 @@ int sshlx_session_connect(sshlx_session *s)
 
     s->exited = false;
     s->password_hook_declined = false;
+    s->passphrase_hook_declined = false;
     sshlx_session_set_state(s, SSHLX_STATE_CONNECTING);
     seat_set_trust_status(&s->seat, true);
     errno = 0;
@@ -402,6 +403,16 @@ void sshlx_session_focus(sshlx_session *s, bool has_focus)
     sshlx_after_entry();
 }
 
+void sshlx_session_show_line(sshlx_session *s, int y)
+{
+    if (s->dead)
+        return;
+    term_scroll(s->term, 1, y);
+    term_invalidate(s->term);
+    term_update(s->term);
+    sshlx_after_entry();
+}
+
 void sshlx_session_scroll(sshlx_session *s, int whence, int lines)
 {
     if (s->dead)
@@ -520,6 +531,10 @@ bool sshlx_session_mouse(sshlx_session *s, sshlx_mbutton b,
                      ((uint32_t)col << 16) | (uint32_t)row);
 
     if (a == SSHLX_MA_DRAG || a == SSHLX_MA_MOVE) {
+        if (s->ui_right_button && button == MBT_RIGHT &&
+            !(s->send_raw_mouse &&
+              !(shift && conf_get_bool(s->conf, CONF_mouse_override))))
+            return true;
         /* window.c motion_event() */
         term_mouse(s->term, button, translate_button(button), act,
                    col, row, shift, ctrl, alt);
@@ -552,6 +567,9 @@ bool sshlx_session_mouse(sshlx_session *s, sshlx_mbutton b,
         sshlx_after_entry();
         return false;   /* the UI shows its context menu */
     }
+
+    if (button == MBT_RIGHT && s->ui_right_button && !raw_mouse_mode)
+        return false;   /* the UI pastes or shows its menu */
 
     if (button == MBT_NOTHING)
         return false;
@@ -666,11 +684,93 @@ void sshlx_session_clipboard_lost(sshlx_session *s, int clipboard)
     sshlx_after_entry();
 }
 
+void sshlx_session_set_mouse_ui(sshlx_session *s, bool copy_on_select,
+                                bool ui_right_button)
+{
+    if (s->dead)
+        return;
+    s->copy_on_select = copy_on_select;
+    s->ui_right_button = ui_right_button;
+    sshlx_setup_clipboards(s);
+}
+
+bool sshlx_session_bracketed_paste(const sshlx_session *s)
+{
+    return !s->dead && s->term->bracketed_paste && !s->term->no_bracketed_paste;
+}
+
+char *sshlx_session_all_text(sshlx_session *s)
+{
+    if (s->dead)
+        return NULL;
+    static const int clips[] = { CLIP_CLIPBOARD };
+    s->capture_clip = true;
+    term_copyall(s->term, clips, lenof(clips));
+    s->capture_clip = false;
+    char *text = s->captured_clip;
+    s->captured_clip = NULL;
+    sshlx_after_entry();
+    return text;
+}
+
+char *sshlx_session_selection_text(sshlx_session *s)
+{
+    if (s->dead)
+        return NULL;
+    static const int clips[] = { CLIP_CLIPBOARD };
+    s->capture_clip = true;
+    term_request_copy(s->term, clips, lenof(clips));
+    s->capture_clip = false;
+    char *text = s->captured_clip;
+    s->captured_clip = NULL;
+    sshlx_after_entry();
+    return text;
+}
+
 void sshlx_session_clear_scrollback(sshlx_session *s)
 {
     if (s->dead)
         return;
     term_clrsb(s->term);
+    sshlx_after_entry();
+}
+
+void sshlx_session_clear_terminal(sshlx_session *s)
+{
+    if (s->dead)
+        return;
+    Terminal *term = s->term;
+    /* A full-screen program owns the alternate screen and repaints it. */
+    if (!term->alt_which) {
+        /* Scroll the cursor's line to the top, then blank below it. */
+        char seq[64];
+        int len = 0;
+        if (term->curs.y > 0)
+            len += sprintf(seq + len, "\033[%dS", term->curs.y);
+        const int col = term->curs.x + 1;
+        len += sprintf(seq + len, "\033[2;1H\033[J\033[1;%dH", col);
+        term_data(term, seq, len);
+    }
+    term_clrsb(term);
+    term_invalidate(term);
+    sshlx_after_entry();
+}
+
+void sshlx_session_select_all(sshlx_session *s)
+{
+    if (s->dead)
+        return;
+    Terminal *term = s->term;
+    term->selstart.y = -count234(term->scrollback);
+    term->selstart.x = 0;
+    term->selend.y = term->curs.y;
+    term->selend.x = term->cols;
+    term->selanchor = term->selstart;
+    term->seltype = LEXICOGRAPHIC;
+    term->selstate = SELECTED;
+    static const int clips[] = { COPYALL_CLIPBOARDS };
+    term_copyall(term, clips, lenof(clips));
+    term_invalidate(term);
     sshlx_after_entry();
 }
 

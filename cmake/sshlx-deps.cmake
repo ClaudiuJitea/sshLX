@@ -47,7 +47,8 @@ if(SSHLX_KEYCHAIN)
     set(BUILD_TRANSLATIONS OFF CACHE BOOL "" FORCE)
     set(QTKEYCHAIN_STATIC OFF CACHE BOOL "" FORCE)    # LGPL: shared library
     # libsecret (GNOME Keyring / Secret Service) needs libsecret-1-dev at
-    # build time; without it QtKeychain still supports KWallet over D-Bus.
+    # build time. Without it QtKeychain only reaches KWallet, and on GNOME every
+    # keyring job fails with "Unknown error", so that build is refused here.
     # sshLX never enables QtKeychain's insecure plaintext fallback.
     find_package(PkgConfig QUIET)
     set(_have_libsecret OFF)
@@ -59,8 +60,10 @@ if(SSHLX_KEYCHAIN)
     endif()
     set(LIBSECRET_SUPPORT ${_have_libsecret} CACHE BOOL "" FORCE)
     if(NOT _have_libsecret)
-      message(STATUS "sshLX: libsecret-1 not found; keyring support limited to KWallet "
-                     "(install libsecret-1-dev for GNOME Keyring / Secret Service)")
+      message(FATAL_ERROR "sshLX: libsecret-1 not found, so saved passwords and the "
+                          "Credentials Manager would not work on GNOME. Install "
+                          "libsecret-1-dev, or pass -DSSHLX_KEYCHAIN=OFF to build "
+                          "without the keyring.")
     endif()
     set(BUILD_SHARED_LIBS_SAVED ${BUILD_SHARED_LIBS})
     set(BUILD_SHARED_LIBS ON)

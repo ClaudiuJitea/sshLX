@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(sshLX VERSION 0.6.0
+project(sshLX VERSION 0.7.0
   DESCRIPTION "Tabbed, session-managed terminal client built on the PuTTY core"
   LANGUAGES C CXX)
 
@@ -57,6 +57,7 @@ if(SSHLX_BUILD_APP)
   include(sshlx-deps)
 endif()
 
+enable_testing()
 add_subdirectory(src/engine)
 add_subdirectory(src/platform/serialdetect)
 if(SSHLX_BUILD_APP)

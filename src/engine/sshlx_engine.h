@@ -251,6 +251,8 @@ typedef struct sshlx_prompt_request {
     const char *filename;
     /* PASSWORD: the prompt text and remote user/host for keyring lookup */
     const char *prompt_text;
+    /* PASSWORD: this asks for a private key's passphrase, not a login password */
+    bool passphrase;
 } sshlx_prompt_request;
 
 typedef enum {
@@ -294,6 +296,9 @@ typedef struct sshlx_session_callbacks {
     void (*set_zorder)(void *ctx, bool top);
     void (*refresh)(void *ctx);
     void (*palette_changed)(void *ctx, sshlx_rgb default_bg);
+    /* Bytes received from the remote side, after the terminal has had them
+     * (may be NULL). Do not send from inside this. */
+    void (*output_data)(void *ctx, const char *data, size_t len);
 
     /* Clipboard. utf8 is the selection; must_deselect as in PuTTY. */
     void (*clip_write)(void *ctx, int clipboard, const char *utf8,
@@ -362,6 +367,9 @@ void sshlx_session_invalidate(sshlx_session *s);
 void sshlx_session_focus(sshlx_session *s, bool has_focus);
 /* As PuTTY's term_scroll(): whence +1 = absolute position from the top of
  * the scrollback (scrollbar), 0 = relative, -1 = relative to the bottom. */
+/* Scroll so that line y of the whole buffer (0 = oldest) is at the top and
+ * draw it now, rather than on the next timer. */
+void sshlx_session_show_line(sshlx_session *s, int y);
 void sshlx_session_scroll(sshlx_session *s, int whence, int lines);
 void sshlx_session_get_size(const sshlx_session *s, int *cols, int *rows);
 sshlx_rgb sshlx_session_default_bg(const sshlx_session *s);
@@ -418,7 +426,26 @@ void sshlx_session_request_paste(sshlx_session *s, int clipboard);
 void sshlx_session_copy(sshlx_session *s, int clipboard);
 void sshlx_session_copy_all(sshlx_session *s);
 void sshlx_session_clipboard_lost(sshlx_session *s, int clipboard);
+/* copy_on_select: a mouse selection also fills CLIPBOARD, whatever the Conf
+ * says. ui_right_button: plain right clicks stop reaching the selection
+ * code (sshlx_session_mouse returns false and the UI acts on them); a
+ * program that asked for the mouse still gets them. Neither is stored in
+ * the Conf, which is shared with PuTTY. */
+void sshlx_session_set_mouse_ui(sshlx_session *s, bool copy_on_select,
+                                bool ui_right_button);
+/* True while the running program has bracketed paste on, i.e. a paste
+ * cannot run commands by itself. */
+bool sshlx_session_bracketed_paste(const sshlx_session *s);
+/* All scrollback and screen text as UTF-8, or NULL. sshlx_free() it. */
+char *sshlx_session_all_text(sshlx_session *s);
+/* The latest mouse selection as UTF-8, or NULL. sshlx_free() it. */
+char *sshlx_session_selection_text(sshlx_session *s);
 void sshlx_session_clear_scrollback(sshlx_session *s);
+/* Clear Terminal: the scrollback and the screen, except the cursor's line,
+ * which moves to the top so a prompt and anything typed at it survive. */
+void sshlx_session_clear_terminal(sshlx_session *s);
+/* Selects everything, scrollback included, and copies it. */
+void sshlx_session_select_all(sshlx_session *s);
 void sshlx_session_reset_terminal(sshlx_session *s);
 
 /* Special commands (the backend's specials menu). */

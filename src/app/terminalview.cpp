@@ -7,12 +7,14 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QRegularExpression>
 #include <QStyleHints>
 #include <QWheelEvent>
 
 #include <cmath>
 
 #include "fontspec.h"
+#include "highlightrules.h"
 #include "keymap.h"
 #include "shortcuts.h"
 
@@ -132,6 +134,11 @@ void TerminalView::updateGrid()
     bool changed = (cols != m_cols || rows != m_rows);
     m_cols = cols;
     m_rows = rows;
+    if (changed) {
+        m_cells.assign(qsizetype(cols) * rows, Cell());
+        m_rowRules.assign(rows, QVector<int>());
+        m_rowStale.assign(rows, true);
+    }
     if (m_session) {
         if (changed)
             sshlx_session_resize(m_session, cols, rows);
@@ -158,11 +165,159 @@ void TerminalView::paintEvent(QPaintEvent *e)
     QPainter p(this);
     p.setClipRegion(e->region());
     p.drawImage(0, 0, m_image);
+    if (overlayActive())
+        paintHighlights(p, e->rect());
+}
+
+void TerminalView::setHighlights(const HighlightSet *set)
+{
+    m_highlights = set && !set->isEmpty() ? set : nullptr;
+    m_rowStale.fill(true);
+    update();
+}
+
+bool TerminalView::overlayActive() const
+{
+    return m_highlights || (m_find && !m_find->isEmpty());
+}
+
+void TerminalView::setFind(const QString &text, bool matchCase)
+{
+    QList<HighlightRule> rules;
+    if (!text.isEmpty()) {
+        HighlightRule r;
+        r.pattern = text;
+        r.matchCase = matchCase;
+        r.wholeWord = false;
+        rules.append(r);
+    }
+    if (!m_find)
+        m_find = std::make_unique<HighlightSet>();
+    m_find->setRules(rules);
+    m_rowStale.fill(true);
+    update();
+}
+
+void TerminalView::setFindCurrent(int row, int start, int len)
+{
+    m_findRow = row;
+    m_findStart = start;
+    m_findLen = len;
+    m_rowStale.fill(true);
+    update();
+}
+
+QString TerminalView::rowText(int row) const
+{
+    QString line;
+    if (row < 0 || row >= m_rows || m_cells.size() != qsizetype(m_cols) * m_rows)
+        return line;
+    for (int c = 0; c < m_cols; c++) {
+        char32_t ch = m_cells[row * m_cols + c].ch;
+        if (ch)
+            line += QString::fromUcs4(&ch, 1);
+    }
+    while (line.endsWith(' '))
+        line.chop(1);
+    return line;
+}
+
+static constexpr int kFindMatch = -2, kFindCurrent = -3;
+
+void TerminalView::matchRow(int row)
+{
+    // Columns of each UTF-16 unit: wide and astral characters do not map 1:1.
+    QString line;
+    QVector<int> colOf;
+    for (int c = 0; c < m_cols; c++) {
+        char32_t ch = m_cells[row * m_cols + c].ch;
+        if (!ch)
+            continue;
+        const QString s = QString::fromUcs4(&ch, 1);
+        line += s;
+        colOf.append(QVector<int>(s.size(), c));
+    }
+    QVector<int> &rules = m_rowRules[row];
+    rules.assign(m_cols, -1);
+    if (m_highlights) {
+        const QVector<int> owner = m_highlights->match(line);
+        for (int i = 0; i < owner.size(); i++)
+            rules[colOf[i]] = owner[i];
+    }
+    if (m_find && !m_find->isEmpty()) {
+        const QVector<int> owner = m_find->match(line);
+        for (int i = 0; i < owner.size(); i++)
+            if (owner[i] >= 0)
+                rules[colOf[i]] = kFindMatch;
+    }
+    if (row == m_findRow)
+        for (int i = m_findStart; i < m_findStart + m_findLen && i < colOf.size(); i++)
+            rules[colOf[i]] = kFindCurrent;
+    for (int c = 1; c < m_cols; c++)
+        if (!m_cells[row * m_cols + c].ch)
+            rules[c] = rules[c - 1];
+    m_rowStale[row] = false;
+}
+
+// Keywords are drawn over the blitted image, so PuTTY's picture of the
+// screen stays as it is. Cells on a background of their own are left out:
+// that is the selection, the cursor, and whatever a program coloured.
+void TerminalView::paintHighlights(QPainter &p, const QRect &area)
+{
+    if (m_cells.size() != qsizetype(m_cols) * m_rows)
+        return;
+    const int b = m_fontNames.border;
+    const QRgb plainBg = m_defaultBg.rgb();
+    static const QList<HighlightRule> noRules;
+    const QList<HighlightRule> &rules = m_highlights ? m_highlights->rules() : noRules;
+    const int first = std::max(0, (area.top() - b) / m_ch);
+    const int last = std::min(m_rows - 1, (area.bottom() - b) / m_ch);
+    for (int row = first; row <= last; row++) {
+        if (m_rowStale[row])
+            matchRow(row);
+        const QVector<int> &owner = m_rowRules[row];
+        for (int c = 0; c < m_cols; c++) {
+            const int index = owner[c];
+            const Cell &cell = m_cells[row * m_cols + c];
+            const bool found = index == kFindMatch || index == kFindCurrent;
+            if ((index < 0 && !found) || !cell.ch)
+                continue;
+            if (!found && (!cell.plain || cell.bg != plainBg))
+                continue;
+            const bool wide = c + 1 < m_cols && !m_cells[row * m_cols + c + 1].ch;
+            const int cells = wide ? 2 : 1;
+            const int x = b + c * m_cw, y = b + row * m_ch;
+            QRect r(x, y, cells * m_cw, m_ch);
+            QColor fg(cell.fg), bg(cell.bg);
+            bool bold = cell.bold;
+            if (found) {
+                fg = Qt::black;
+                bg = QColor(index == kFindCurrent ? "#ff922b" : "#ffe066");
+            } else {
+                const HighlightRule &rule = rules[index];
+                if (!rule.fg.isEmpty())
+                    fg = QColor(rule.fg);
+                if (!rule.bg.isEmpty())
+                    bg = QColor(rule.bg);
+                bold = bold || rule.bold;
+            }
+            p.fillRect(r, bg);
+            p.save();
+            p.setClipRect(r);
+            p.setFont(pickFont(bold, wide));
+            p.setPen(fg);
+            const uint32_t ch = cell.ch;
+            drawGlyphs(p, x, y + m_ascent, &ch, 1, false, cells, m_exactAdvance && !bold);
+            p.restore();
+        }
+    }
 }
 
 // ---- engine drawing --------------------------------------------------------
 bool TerminalView::beginDraw()
 {
+    if (m_capturing)
+        return true;
     if (m_image.isNull())
         return false;
     if (!m_painter) {
@@ -176,8 +331,14 @@ void TerminalView::endDraw()
 {
     if (m_painter)
         m_painter.reset();
-    if (!m_dirty.isNull())
+    if (!m_dirty.isNull()) {
+        // One new character can complete a keyword begun earlier on the row.
+        if (overlayActive()) {
+            m_dirty.setLeft(0);
+            m_dirty.setRight(width());
+        }
         update(m_dirty);
+    }
     m_dirty = QRect();
 }
 
@@ -226,6 +387,27 @@ void TerminalView::drawGlyphs(QPainter &p, qreal x, qreal baseline,
 void TerminalView::drawText(int col, int row, int ncells, const uint32_t *text,
                             int len, const sshlx_text_style *st)
 {
+    if (row >= 0 && row < m_rows && m_cells.size() == qsizetype(m_cols) * m_rows) {
+        const bool combining = st->flags & SSHLX_A_COMBINING;
+        const int step = (st->flags & SSHLX_A_WIDE) ? 2 : 1;
+        Cell cell;
+        cell.fg = qRgb(st->fg.r, st->fg.g, st->fg.b);
+        cell.bg = qRgb(st->bg.r, st->bg.g, st->bg.b);
+        cell.bold = st->flags & SSHLX_A_BOLD_FONT;
+        cell.plain = !combining && st->line_attr == SSHLX_LINE_NORMAL &&
+            !(st->flags & (SSHLX_A_UNDER | SSHLX_A_STRIKE));
+        const int chars = combining ? 1 : len;
+        for (int i = 0; i < chars && col + i * step < m_cols; i++) {
+            cell.ch = text[i];
+            m_cells[row * m_cols + col + i * step] = cell;
+            if (step == 2 && col + i * 2 + 1 < m_cols) {
+                cell.ch = 0;
+                m_cells[row * m_cols + col + i * 2 + 1] = cell;
+            }
+        }
+        if (!m_rowStale.isEmpty())
+            m_rowStale[row] = true;
+    }
     if (!m_painter)
         return;
     QPainter &p = *m_painter;
@@ -360,6 +542,17 @@ void TerminalView::keyPressEvent(QKeyEvent *e)
 {
     if (!m_session)
         return;
+    if (e->key() == Qt::Key_Menu && e->modifiers() == Qt::NoModifier) {
+        const int b = m_fontNames.border;
+        emit rightClicked(mapToGlobal(QPoint(b + m_cursorCol * m_cw, b + (m_cursorRow + 1) * m_ch)),
+                          QPoint(m_cursorCol, m_cursorRow), true);
+        e->accept();
+        return;
+    }
+    if (m_inputBlocked) {
+        e->accept();
+        return;
+    }
     if (sshlx_session_state(m_session) == SSHLX_STATE_DISCONNECTED) {
         emit keyPressedWhileDisconnected();
     }
@@ -443,13 +636,48 @@ void TerminalView::mouseButton(QMouseEvent *e, sshlx_maction action)
     bool consumed = sshlx_session_mouse(m_session, b, action, cell.x(), cell.y(),
                                         KeyMap::modifiers(e->modifiers()));
     if (!consumed && b == SSHLX_MB_RIGHT && action == SSHLX_MA_CLICK)
-        emit contextMenuRequested(e->globalPosition().toPoint());
+        emit rightClicked(e->globalPosition().toPoint(), cell,
+                          e->modifiers() & Qt::ControlModifier);
+}
+
+QString TerminalView::linkAt(const QPoint &cell) const
+{
+    if (cell.y() < 0 || cell.y() >= m_rows || cell.x() < 0 || cell.x() >= m_cols ||
+        m_cells.size() != m_cols * m_rows)
+        return {};
+    QString line;
+    int textCol = -1;
+    for (int c = 0; c < m_cols; c++) {
+        if (c == cell.x())
+            textCol = line.size();
+        char32_t ch = m_cells[cell.y() * m_cols + c].ch;
+        if (ch)
+            line += QString::fromUcs4(&ch, 1);
+    }
+    static const QRegularExpression re(R"(https?://[^\s<>"'`]+)");
+    for (auto it = re.globalMatch(line); it.hasNext();) {
+        QRegularExpressionMatch m = it.next();
+        QString url = m.captured();
+        while (!url.isEmpty() && QStringLiteral(".,;:!?)]}").contains(url.back()))
+            url.chop(1);
+        if (textCol >= m.capturedStart() && textCol < m.capturedStart() + url.size())
+            return url;
+    }
+    return {};
 }
 
 void TerminalView::mousePressEvent(QMouseEvent *e)
 {
     setFocus(Qt::MouseFocusReason);
     QPoint cell = cellAt(e->position());
+    if (e->button() == Qt::LeftButton && e->modifiers() == Qt::ControlModifier &&
+        !m_rawPointer) {
+        const QString url = linkAt(cell);
+        if (!url.isEmpty()) {
+            emit linkActivated(url);
+            return;
+        }
+    }
     int interval = QGuiApplication::styleHints()->mouseDoubleClickInterval();
     if (m_lastClick.isValid() && m_lastClick.elapsed() < interval &&
         cell == m_lastClickCell && e->button() == m_lastClickButton)

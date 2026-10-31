@@ -274,6 +274,11 @@ static void sshlx_tw_clip_write(TermWin *tw, int clipboard, wchar_t *text,
         return;   /* as GTK: no clipboard in direct-to-font mode */
     size_t outlen;
     char *utf8 = dup_wc_to_mb_c(CS_UTF8, text, len, "", &outlen);
+    if (s->capture_clip) {
+        sfree(s->captured_clip);
+        s->captured_clip = utf8;
+        return;
+    }
     UI_CALL(s, clip_write, clipboard, utf8, must_deselect);
     sfree(utf8);
 }
@@ -421,7 +426,7 @@ void sshlx_setup_clipboards(sshlx_session *s)
     term->n_mouse_select_clipboards = 1;
     term->mouse_select_clipboards[
         term->n_mouse_select_clipboards++] = MOUSE_SELECT_CLIPBOARD;
-    if (conf_get_bool(conf, CONF_mouseautocopy)) {
+    if (s->copy_on_select || conf_get_bool(conf, CONF_mouseautocopy)) {
         term->mouse_select_clipboards[
             term->n_mouse_select_clipboards++] = CLIP_CLIPBOARD;
     }

@@ -5,7 +5,8 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 # Connection tree model: Qt Core only (unit-testable without the engine).
-add_library(sshlx-model STATIC model/connectiontree.cpp model/serialrules.cpp)
+add_library(sshlx-model STATIC model/connectiontree.cpp model/serialrules.cpp
+  model/configpush.cpp model/highlightrules.cpp)
 target_include_directories(sshlx-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/model)
 target_link_libraries(sshlx-model PUBLIC Qt6::Core)
 
@@ -30,6 +31,12 @@ add_library(sshlx-app STATIC
   propertydefs.cpp
   propertygrid.cpp
   serialmanager.cpp
+  configpushbar.cpp
+  configpushdialog.cpp
+  credentialsdialog.cpp
+  highlightruledialog.cpp
+  macros.cpp
+  findbar.cpp
   optionsdialog.cpp
   keyring.cpp
   icons.cpp
@@ -50,6 +57,12 @@ target_link_libraries(sshlx-app PUBLIC ${SSHLX_ADS_TARGET})
 if(SSHLX_KEYCHAIN_TARGET)
   target_link_libraries(sshlx-app PUBLIC ${SSHLX_KEYCHAIN_TARGET})
   target_compile_definitions(sshlx-app PRIVATE SSHLX_HAVE_KEYCHAIN)
+endif()
+
+find_package(Qt6 COMPONENTS PrintSupport QUIET)
+if(TARGET Qt6::PrintSupport)
+  target_link_libraries(sshlx-app PUBLIC Qt6::PrintSupport)
+  target_compile_definitions(sshlx-app PUBLIC SSHLX_HAVE_PRINT)
 endif()
 
 find_package(Qt6 COMPONENTS DBus QUIET)
@@ -93,3 +106,22 @@ install(FILES ${CMAKE_SOURCE_DIR}/LICENSE
 install(FILES ${CMAKE_SOURCE_DIR}/third_party/putty/LICENCE
         DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/sshlx RENAME PUTTY-LICENCE
         COMPONENT sshlx)
+
+find_package(Qt6 COMPONENTS Test QUIET)
+if(TARGET Qt6::Test)
+  add_executable(configpush-test ${CMAKE_SOURCE_DIR}/tests/configpush_test.cpp)
+  target_link_libraries(configpush-test PRIVATE sshlx-model Qt6::Test)
+  add_test(NAME configpush COMMAND configpush-test)
+  add_executable(highlightrules-test ${CMAKE_SOURCE_DIR}/tests/highlightrules_test.cpp)
+  target_link_libraries(highlightrules-test PRIVATE sshlx-model Qt6::Test)
+  add_test(NAME highlightrules COMMAND highlightrules-test)
+  add_executable(credentials-test ${CMAKE_SOURCE_DIR}/tests/credentials_test.cpp)
+  target_link_libraries(credentials-test PRIVATE sshlx-model Qt6::Test)
+  add_test(NAME credentials COMMAND credentials-test)
+  add_executable(session-e2e-test ${CMAKE_SOURCE_DIR}/tests/session_e2e_test.cpp)
+  target_link_libraries(session-e2e-test PRIVATE sshlx-app Qt6::Test)
+  target_compile_definitions(session-e2e-test PRIVATE
+    SSHLX_FAKE_IOS="${CMAKE_SOURCE_DIR}/tests/fake_ios.py")
+  add_test(NAME session-e2e COMMAND session-e2e-test)
+  set_tests_properties(session-e2e PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+endif()

@@ -26,6 +26,48 @@ Before you start:
 | 1.12 | Change Settings mid-session (tab context menu): font, colours, scrollback | Applied immediately, as in PuTTY |
 | 1.13 | Weak cipher allowed below the warn line | Weak-crypto question in the tab |
 
+## 1b. Terminal mouse and Paste Configuration
+
+Automated against a fake device by `ctest` (`tests/session_e2e_test.cpp`); these need a real desktop and device.
+
+| # | Step | Expected |
+|---|---|---|
+| 1b.1 | Select text, paste into another application with Ctrl+V | The selection arrives |
+| 1b.2 | Right click in the terminal; Ctrl + right click; Menu key | Pastes; menu; menu |
+| 1b.3 | Right click inside `vim` with `set mouse=a`, then Shift + right click | vim gets the first; the second pastes |
+| 1b.4 | Copy two lines, right click at a shell without bracketed paste | Asks first |
+| 1b.5 | Paste Configuration on a real switch with one misspelt line | Stops on it; Send Amended continues from there; Skip Line goes on to the next |
+| 1b.6 | The same over a 9600 serial console, with a `banner motd` block and `write memory` | Nothing lost; no false stops |
+| 1b.7 | Pull the cable during a push | Bar says Stopped, with what was applied |
+
+## 1c. Keyword highlighting
+
+| # | Step | Expected |
+|---|---|---|
+| 1c.1 | Add `up` in green and `down` in red, then run `show ip interface brief` | Each word shows in its own colour |
+| 1c.2 | Select a coloured word | The selection shows normally |
+| 1c.3 | Scroll back; resize; change font | Colours stay on the right text |
+| 1c.4 | Ctrl+Shift+H | All tabs lose and regain colours at once |
+
+## 1d. Terminal menu
+
+| # | Step | Expected |
+|---|---|---|
+| 1d.0 | Ctrl+Shift+F, search a word in a long scrollback; Previous and Next; Esc | Matches light up in the terminal, it jumps to each, Esc returns to the bottom |
+| 1d.1 | Print Terminal Text to a real printer | Prints the whole scrollback |
+| 1d.2 | Clear Terminal inside `vim` | vim's screen stays; scrollback is emptied |
+| 1d.3 | Change Terminal Title, then run a program that sets the title | The title you chose stays; an empty title follows the server again |
+
+## 1e. Credentials Manager
+
+| # | Step | Expected |
+|---|---|---|
+| 1e.1 | Create a credential with a password, link a folder, log in to two devices inside it | Both log in without asking; the secret is visible in Seahorse/KWallet as `credential:<id>`, and in no file under `~/.config/sshLX` |
+| 1e.2 | Change the password, then reconnect an open tab | The new one is used |
+| 1e.3 | A credential with a passphrase-protected key and a password | Each goes to its own prompt |
+| 1e.4 | A wrong stored password | Offered once, then PuTTY asks in the terminal |
+| 1e.5 | Lock the keyring or stop its service, then Save | Error shown; nothing is saved and the dialog stays open |
+
 ## 2. Settings compatibility
 
 | # | Step | Expected |

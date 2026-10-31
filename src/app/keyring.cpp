@@ -1,5 +1,6 @@
 #include "keyring.h"
 
+#include <QHash>
 #include <QSettings>
 
 #ifdef SSHLX_HAVE_KEYCHAIN
@@ -13,9 +14,18 @@
 namespace Keyring {
 
 static const char *kService = "sshLX";
+static QHash<QString, QString> *g_testStore = nullptr;
+
+void useMemoryForTests()
+{
+    if (!g_testStore)
+        g_testStore = new QHash<QString, QString>;
+}
 
 bool available()
 {
+    if (g_testStore)
+        return true;
 #ifdef SSHLX_HAVE_KEYCHAIN
     return true;
 #else
@@ -38,8 +48,18 @@ QString accountFor(const QString &connectionId)
     return QStringLiteral("connection:") + connectionId;
 }
 
+QString credentialAccount(const QString &credentialId, bool passphrase)
+{
+    return QStringLiteral("credential:") + credentialId +
+           (passphrase ? QStringLiteral(":passphrase") : QString());
+}
+
 void read(const QString &account, std::function<void(bool, const QString &)> done)
 {
+    if (g_testStore) {
+        done(g_testStore->contains(account), g_testStore->value(account));
+        return;
+    }
 #ifdef SSHLX_HAVE_KEYCHAIN
     auto *job = new QKeychain::ReadPasswordJob(QLatin1String(kService));
     job->setAutoDelete(true);
@@ -62,6 +82,12 @@ void read(const QString &account, std::function<void(bool, const QString &)> don
 void write(const QString &account, const QString &password,
            std::function<void(bool, const QString &)> done)
 {
+    if (g_testStore) {
+        g_testStore->insert(account, password);
+        if (done)
+            done(true, QString());
+        return;
+    }
 #ifdef SSHLX_HAVE_KEYCHAIN
     auto *job = new QKeychain::WritePasswordJob(QLatin1String(kService));
     job->setAutoDelete(true);
@@ -83,6 +109,12 @@ void write(const QString &account, const QString &password,
 
 void remove(const QString &account, std::function<void(bool)> done)
 {
+    if (g_testStore) {
+        g_testStore->remove(account);
+        if (done)
+            done(true);
+        return;
+    }
 #ifdef SSHLX_HAVE_KEYCHAIN
     auto *job = new QKeychain::DeletePasswordJob(QLatin1String(kService));
     job->setAutoDelete(true);

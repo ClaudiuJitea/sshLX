@@ -1,4 +1,5 @@
 #include "optionsdialog.h"
+#include "sessionwidget.h"
 
 #include <QApplication>
 #include <QCheckBox>
@@ -12,12 +13,14 @@
 #include <QListWidget>
 #include <QPushButton>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QScrollArea>
 #include <QStackedWidget>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
 #include "dialogkit.h"
+#include "highlightruledialog.h"
 #include "icons.h"
 #include "keyring.h"
 #include "mainwindow.h"
@@ -144,6 +147,36 @@ OptionsDialog::OptionsDialog(MainWindow *main) : QDialog(main), m_main(main)
             page(tr("General"), tr("Appearance and session behaviour"),
                  {card(tr("Appearance"), appearanceBox), card(tr("Sessions"), sessions)}));
 
+    // ---- Terminal ----
+    m_copyOnSelect = new QCheckBox(tr("Copy selected text to the clipboard"));
+    m_copyOnSelect->setChecked(st.value("terminal/copyOnSelect", true).toBool());
+    m_confirmPaste = new QCheckBox(tr("Ask before pasting several lines"));
+    m_confirmPaste->setChecked(st.value("terminal/confirmMultilinePaste", true).toBool());
+    m_rightClick = new QComboBox;
+    m_rightClick->addItem(tr("Paste"), "paste");
+    m_rightClick->addItem(tr("Show the menu"), "menu");
+    m_rightClick->addItem(tr("Extend the selection (as PuTTY)"), "extend");
+    m_rightClick->setCurrentIndex(
+        qMax(0, m_rightClick->findData(st.value("terminal/rightClick", "paste"))));
+    m_rightClick->setMinimumWidth(260);
+    auto *mouseForm = form();
+    mouseForm->addRow(tr("Right click"), m_rightClick);
+    auto *mouse = new QVBoxLayout;
+    mouse->setSpacing(10);
+    mouse->addLayout(mouseForm);
+    mouse->addWidget(hint(tr("Ctrl + right click and the Menu key always show the menu. "
+                             "A program using the mouse (vim, htop) gets the clicks; hold "
+                             "Shift to reach these instead.")));
+    mouse->addWidget(withHint(m_copyOnSelect, tr("Otherwise a selection goes only to the "
+                                                 "middle-click paste buffer, as in PuTTY.")));
+    mouse->addWidget(withHint(m_confirmPaste, tr("Offers to send them one at a time with "
+                                                 "Paste Configuration. Not asked when the "
+                                                 "program has bracketed paste on.")));
+    addPage("terminal", tr("Terminal"),
+            page(tr("Terminal"), tr("Mouse, copy and paste"), {card(tr("Mouse"), mouse)}));
+
+    addPage("palette", tr("Highlighting"), buildHighlighting());
+
     // ---- Serial ----
     addPage("usb", tr("Serial"), buildSerial());
     // ---- Shortcuts ----
@@ -183,6 +216,99 @@ OptionsDialog::OptionsDialog(MainWindow *main) : QDialog(main), m_main(main)
     outer->setSpacing(0);
     outer->addLayout(root, 1);
     outer->addWidget(footerWrap);
+}
+
+QWidget *OptionsDialog::buildHighlighting()
+{
+    m_keywords = HighlightSet::load();
+    m_keywordsOn = new QCheckBox(tr("Highlight keywords in the terminal"));
+    m_keywordsOn->setChecked(HighlightSet::enabled());
+    m_keywordList = new QListWidget;
+    m_keywordList->setMinimumHeight(240);
+    auto *add = secondaryButton(tr("Add..."));
+    auto *edit = secondaryButton(tr("Edit..."));
+    auto *remove = secondaryButton(tr("Remove"));
+    auto *up = secondaryButton(tr("Move Up"));
+    auto *down = secondaryButton(tr("Move Down"));
+    auto *buttons = new QHBoxLayout;
+    for (QPushButton *b : {add, edit, remove, up, down})
+        buttons->addWidget(b);
+    buttons->addStretch(1);
+    auto *box = new QVBoxLayout;
+    box->setSpacing(10);
+    box->addWidget(m_keywordsOn);
+    box->addWidget(m_keywordList);
+    box->addLayout(buttons);
+    box->addWidget(hint(tr("Checked from the top, and the first match wins, so put specific "
+                           "patterns above generic ones. Ctrl+Shift+H turns highlighting on "
+                           "and off. A keyword split across two screen lines is not coloured.")));
+    refreshKeywords();
+
+    auto editRow = [this](int row) {
+        HighlightRuleDialog dlg(m_keywords[row], this);
+        if (dlg.exec() == QDialog::Accepted) {
+            HighlightRule r = dlg.rule();
+            r.enabled = m_keywords[row].enabled;
+            m_keywords[row] = r;
+            refreshKeywords();
+            m_keywordList->setCurrentRow(row);
+        }
+    };
+    auto moveRow = [this](int delta) {
+        const int row = m_keywordList->currentRow();
+        if (row < 0 || row + delta < 0 || row + delta >= m_keywords.size())
+            return;
+        m_keywords.swapItemsAt(row, row + delta);
+        refreshKeywords();
+        m_keywordList->setCurrentRow(row + delta);
+    };
+    connect(add, &QPushButton::clicked, this, [this] {
+        HighlightRuleDialog dlg(HighlightRule(), this);
+        if (dlg.exec() == QDialog::Accepted) {
+            m_keywords.prepend(dlg.rule());
+            refreshKeywords();
+            m_keywordList->setCurrentRow(0);
+        }
+    });
+    connect(edit, &QPushButton::clicked, this, [this, editRow] {
+        if (m_keywordList->currentRow() >= 0)
+            editRow(m_keywordList->currentRow());
+    });
+    connect(m_keywordList, &QListWidget::itemDoubleClicked, this,
+            [this, editRow](QListWidgetItem *it) { editRow(m_keywordList->row(it)); });
+    connect(remove, &QPushButton::clicked, this, [this] {
+        const int row = m_keywordList->currentRow();
+        if (row >= 0) {
+            m_keywords.removeAt(row);
+            refreshKeywords();
+        }
+    });
+    connect(up, &QPushButton::clicked, this, [moveRow] { moveRow(-1); });
+    connect(down, &QPushButton::clicked, this, [moveRow] { moveRow(+1); });
+    connect(m_keywordList, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
+        const int row = m_keywordList->row(it);
+        if (row >= 0 && row < m_keywords.size())
+            m_keywords[row].enabled = it->checkState() == Qt::Checked;
+    });
+    return page(tr("Highlighting"), tr("Colour words and patterns in terminal output"),
+                {card(tr("Keywords"), box)});
+}
+
+void OptionsDialog::refreshKeywords()
+{
+    QSignalBlocker block(m_keywordList);
+    m_keywordList->clear();
+    for (const HighlightRule &r : m_keywords) {
+        auto *it = new QListWidgetItem(r.regex ? tr("%1   (regular expression)").arg(r.pattern)
+                                               : r.pattern, m_keywordList);
+        it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+        it->setCheckState(r.enabled ? Qt::Checked : Qt::Unchecked);
+        QFont f = it->font();
+        f.setBold(r.bold);
+        it->setFont(f);
+        it->setBackground(QColor(r.bg.isEmpty() ? QStringLiteral("#000000") : r.bg));
+        it->setForeground(QColor(r.fg.isEmpty() ? QStringLiteral("#bbbbbb") : r.fg));
+    }
 }
 
 QWidget *OptionsDialog::buildSerial()
@@ -314,6 +440,13 @@ void OptionsDialog::apply()
     st.setValue("behaviour/restoreSessions", m_restore->isChecked());
     st.setValue("behaviour/closeTabOnExit", m_closeOnExit->isChecked());
     st.setValue("behaviour/reuseTab", m_reuseTab->isChecked());
+    st.setValue("terminal/copyOnSelect", m_copyOnSelect->isChecked());
+    st.setValue("terminal/confirmMultilinePaste", m_confirmPaste->isChecked());
+    st.setValue("terminal/rightClick", m_rightClick->currentData());
+    SessionWidget::reloadMousePrefs();
+    HighlightSet::save(m_keywords);
+    HighlightSet::setEnabled(m_keywordsOn->isChecked());
+    SessionWidget::reloadHighlights();
     st.setValue("serial/udev", m_udev->isChecked());
     st.setValue("notifications/desktop", m_desktop->isChecked());
     Keyring::setEnabled(m_keyring->isChecked());

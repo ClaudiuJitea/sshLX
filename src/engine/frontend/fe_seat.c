@@ -107,6 +107,7 @@ static void emit_prompt(sshlx_session *s, pending_prompt *pp,
     req.keytype = pp->keytype;
     req.filename = filename;
     req.prompt_text = prompt_text;
+    req.passphrase = pp->passphrase;
     switch (pp->kind) {
       case SSHLX_PROMPT_HOSTKEY:
         /* Button labels as in unix/dialog.c */
@@ -193,7 +194,10 @@ static size_t sshlx_seat_output(Seat *seat, SeatOutputType type,
 {
     sshlx_session *s = SESSION_OF(seat);
     (void)type;
-    return term_data(s->term, data, len);
+    size_t backlog = term_data(s->term, data, len);
+    if (s->cb.output_data && !s->dead)
+        UI_CALL(s, output_data, data, len);
+    return backlog;
 }
 
 static bool sshlx_seat_eof(Seat *seat)
@@ -210,16 +214,19 @@ static SeatPromptResult sshlx_seat_get_userpass_input(Seat *seat,
     /* Opt-in keyring hook: offer a single hidden prompt to the UI first.
      * PuTTY's own behaviour (prompt in the terminal) is the fallback and
      * the default. */
-    if (s->password_hook && !s->password_hook_declined &&
+    bool passphrase = p->name && !strcmp(p->name, "SSH key passphrase");
+    bool *declined = passphrase ? &s->passphrase_hook_declined
+                                : &s->password_hook_declined;
+    if (s->password_hook && !*declined &&
         p->n_prompts == 1 && !p->prompts[0]->echo && p->callback) {
         if (s->hook_password) {
             prompt_set_result(p->prompts[0], s->hook_password);
             smemclr(s->hook_password, strlen(s->hook_password));
             sfree(s->hook_password);
             s->hook_password = NULL;
-            /* Only offer the stored password once per connection, so a
+            /* Only offer each stored secret once per connection, so a
              * wrong one falls back to PuTTY's prompt. */
-            s->password_hook_declined = true;
+            *declined = true;
             return SPR_OK;
         }
         for (pending_prompt *pp = s->prompts; pp; pp = pp->next)
@@ -227,6 +234,7 @@ static SeatPromptResult sshlx_seat_get_userpass_input(Seat *seat,
                 return SPR_INCOMPLETE;
         pending_prompt *pp = prompt_new(s, SSHLX_PROMPT_PASSWORD);
         pp->prompts = p;
+        pp->passphrase = passphrase;
         pp->callback_ctx = p->callback_ctx;
         pp->host = dupstr(conf_get_str(s->conf, CONF_host));
         pp->port = conf_get_int(s->conf, CONF_port);
@@ -251,9 +259,12 @@ void sshlx_session_answer_password(sshlx_session *s, sshlx_prompt_id id,
         return;
     toplevel_callback_fn_t fn = pp->userpass_callback;
     void *ctx = pp->callback_ctx;
+    const bool passphrase = pp->passphrase;
     prompt_unlink_free(s, pp);
     if (password) {
         s->hook_password = dupstr(password);
+    } else if (passphrase) {
+        s->passphrase_hook_declined = true;
     } else {
         s->password_hook_declined = true;
     }

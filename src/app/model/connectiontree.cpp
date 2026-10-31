@@ -191,6 +191,42 @@ const ConnectionNode *ConnectionTree::inheritSource(const ConnectionNode *n,
     return nullptr;
 }
 
+const Credential *ConnectionTree::credential(const QString &id) const
+{
+    for (const Credential &c : m_credentials)
+        if (c.id == id)
+            return &c;
+    return nullptr;
+}
+
+const Credential *ConnectionTree::resolveCredential(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (!n->credential.isEmpty())
+            return credential(n->credential);
+    return nullptr;
+}
+
+QList<ConnectionNode *> ConnectionTree::linkedConnections(const QString &id) const
+{
+    QList<ConnectionNode *> linked;
+    for (ConnectionNode *c : connections())
+        if (const Credential *cred = resolveCredential(c); cred && cred->id == id)
+            linked.append(c);
+    return linked;
+}
+
+void ConnectionTree::unlinkCredential(const QString &id)
+{
+    std::function<void(ConnectionNode *)> walk = [&](ConnectionNode *n) {
+        if (n->credential == id)
+            n->credential.clear();
+        for (ConnectionNode *c : n->children)
+            walk(c);
+    };
+    walk(m_root.get());
+}
+
 QMap<QString, QString> ConnectionTree::resolveInherited(const ConnectionNode *n) const
 {
     QMap<QString, QString> r;
@@ -217,6 +253,7 @@ static QJsonObject nodeToJson(const ConnectionNode *n)
     o["name"] = n->name;
     if (!n->description.isEmpty()) o["description"] = n->description;
     if (!n->icon.isEmpty()) o["icon"] = n->icon;
+    if (!n->credential.isEmpty()) o["credential"] = n->credential;
     if (n->isFolder()) {
         o["expanded"] = n->expanded;
         if (!n->properties.isEmpty()) {
@@ -252,6 +289,7 @@ static ConnectionNode *nodeFromJson(const QJsonObject &o, QString *error)
     n->name = o["name"].toString();
     n->description = o["description"].toString();
     n->icon = o["icon"].toString();
+    n->credential = o["credential"].toString();
     if (n->isFolder()) {
         n->expanded = o["expanded"].toBool(true);
         const QJsonObject p = o["properties"].toObject();
@@ -281,6 +319,18 @@ QJsonObject ConnectionTree::toJson() const
     o["format"] = "sshLX-connections";
     o["version"] = 1;
     o["root"] = nodeToJson(m_root.get());
+    if (!m_credentials.isEmpty()) {
+        QJsonArray list;
+        for (const Credential &c : m_credentials) {
+            QJsonObject e;
+            e["id"] = c.id;
+            e["name"] = c.name;
+            if (!c.username.isEmpty()) e["username"] = c.username;
+            if (!c.keyFile.isEmpty()) e["keyFile"] = c.keyFile;
+            list.append(e);
+        }
+        o["credentials"] = list;
+    }
     return o;
 }
 
@@ -301,6 +351,12 @@ bool ConnectionTree::fromJson(const QJsonObject &o, QString *error)
         return false;
     }
     m_root.reset(root);
+    m_credentials.clear();
+    for (const QJsonValue &v : o["credentials"].toArray()) {
+        const QJsonObject e = v.toObject();
+        m_credentials.append({e["id"].toString(), e["name"].toString(),
+                              e["username"].toString(), e["keyFile"].toString()});
+    }
     return true;
 }
 

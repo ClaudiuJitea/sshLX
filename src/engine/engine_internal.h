@@ -48,6 +48,7 @@ struct pending_prompt {
     /* password hook: identity of the prompts_t and its continuation */
     prompts_t *prompts;
     toplevel_callback_fn_t userpass_callback;
+    bool passphrase;
 };
 
 struct sshlx_session {
@@ -87,7 +88,12 @@ struct sshlx_session {
 
     /* mouse */
     bool send_raw_mouse, pointer_raw;
+    bool copy_on_select, ui_right_button;
     double cumulative_vscroll, cumulative_hscroll;
+
+    /* sshlx_session_all_text() catches term_copyall()'s clipboard write */
+    bool capture_clip;
+    char *captured_clip;
 
     /* event log */
     char **eventlog;
@@ -98,6 +104,7 @@ struct sshlx_session {
     sshlx_prompt_id next_prompt_id;
     bool password_hook;
     bool password_hook_declined;
+    bool passphrase_hook_declined;
     char *hook_password;      /* answer waiting to be consumed */
 
     /* specials cache */

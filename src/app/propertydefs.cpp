@@ -79,10 +79,16 @@ static QList<PropertyDef> buildCurated()
              "TCP port to connect to (PuTTY: Session > Port).");
     l << def("Connection", "Username", "username", K::Text,
              "Auto-login user name (PuTTY: Connection > Data). Empty: ask.");
+    l << def("Connection", "Credential", "@credential", K::Enum,
+             "A shared login from Tools > Credentials Manager. Its user name, key and "
+             "password replace this connection's, and changing it there changes every "
+             "connection linked to it. A folder's credential applies to the connections "
+             "inside it.");
     l << def("Connection", "Password (keyring)", "@password", K::Password,
              "Stored only in the system keyring (opt-in, Tools > Options > Passwords), "
              "never in a file, and offered once when the server asks. Leave empty "
-             "to remove it. PuTTY itself never stores passwords.");
+             "to remove it. Not used while a credential is linked. PuTTY itself never "
+             "stores passwords.");
     l << def("Connection", "SSH tunnel (jump host)", "@sshtunnel", K::Text,
              "Connect through this SSH server first ('user@jumphost[:port]'). "
              "Sets PuTTY's proxy type to 'SSH to proxy and use port forwarding'. "

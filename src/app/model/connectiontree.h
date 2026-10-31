@@ -22,6 +22,17 @@
 
 #include <memory>
 
+// A shared login. Connections and folders link to it by id, so changing it
+// here changes every linked connection. The password and key passphrase are
+// never in this struct or in any file: they live in the system keyring under
+// this id (see keyring.h).
+struct Credential {
+    QString id;
+    QString name;
+    QString username;
+    QString keyFile;
+};
+
 class ConnectionNode {
 public:
     enum Type { Folder, Connection };
@@ -40,6 +51,7 @@ public:
     QString session;          // PuTTY saved-session name (connections)
     QStringList inherit;      // Conf key ids inherited from folders
     QMap<QString, QString> properties;   // folder values: key id -> value
+    QString credential;       // Credential id; empty: use the nearest folder's
 
     ConnectionNode *parent = nullptr;
     QList<ConnectionNode *> children;
@@ -94,6 +106,17 @@ public:
     // The folder that supplies key for n, or nullptr.
     const ConnectionNode *inheritSource(const ConnectionNode *n, const QString &key) const;
 
+    QList<Credential> credentials() const { return m_credentials; }
+    void setCredentials(const QList<Credential> &c) { m_credentials = c; }
+    const Credential *credential(const QString &id) const;
+    // The credential a node uses: its own link, or its nearest folder's. A
+    // link to a credential that no longer exists counts as none.
+    const Credential *resolveCredential(const ConnectionNode *n) const;
+    // Connections using the credential, directly or through a folder.
+    QList<ConnectionNode *> linkedConnections(const QString &id) const;
+    // Forget every direct link to the credential.
+    void unlinkCredential(const QString &id);
+
     QJsonObject toJson() const;
     bool fromJson(const QJsonObject &o, QString *error = nullptr);
     bool load(const QString &path, QString *error = nullptr);
@@ -103,4 +126,5 @@ public:
 
 private:
     std::unique_ptr<ConnectionNode> m_root;
+    QList<Credential> m_credentials;
 };

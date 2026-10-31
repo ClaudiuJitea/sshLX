@@ -51,7 +51,7 @@ Section: net
 Priority: optional
 Architecture: $ARCH_DEB
 Installed-Size: $SIZE
-Depends: $DEPENDS
+Depends: $DEPENDS, libsecret-1-0
 Recommends: qt6-wayland, gnome-keyring | kwalletmanager
 Maintainer: Claudiu Jitea <noreply@github.com>
 Homepage: https://github.com/ClaudiuJitea/sshLX

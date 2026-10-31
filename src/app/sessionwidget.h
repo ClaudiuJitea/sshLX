@@ -5,6 +5,7 @@
 #include <QIcon>
 #include <QPointer>
 #include <QString>
+#include <QStringList>
 #include <QWidget>
 
 #include <functional>
@@ -13,6 +14,9 @@
 
 class TerminalView;
 class PromptBar;
+class ConfigPush;
+class ConfigPushBar;
+class FindBar;
 class QScrollBar;
 class QLabel;
 class QPushButton;
@@ -46,12 +50,15 @@ public:
     QIcon protocolIcon() const;
     int protocol() const;
     TerminalView *view() const { return m_view; }
+    sshlx_session *sessionForTests() const { return m_session; }
     // Text for a "really close?" prompt, or empty.
     QString closeWarning() const;
 
-    void buildContextMenu(QMenu *menu);
+    // linkAt: the link right-clicked on, offered first in the menu.
+    void buildContextMenu(QMenu *menu, const QString &link = QString());
     // Colour scheme, font and cursor, changed live on this tab.
     void buildAppearanceMenu(QMenu *menu);
+    void buildPasswordMenu(QMenu *menu);
     // Applies edit to a copy of the session's conf and reconfigures with it.
     void changeConf(const std::function<void(sshlx_conf *)> &edit);
     void showEventLog();
@@ -59,15 +66,45 @@ public:
     void copy();
     void paste();
     void copyAll();
+    // Opens the review dialog, then sends text line by line (see ConfigPush).
+    void pasteConfiguration(const QString &text = QString());
+    void findInTerminal();
+    void selectAll();
+    void clearTerminal();
+    void saveTerminalText();
+#ifdef SSHLX_HAVE_PRINT
+    void printTerminalText();
+    void printTo(class QPrinter *printer);
+#endif
+    // Your own tab title; empty goes back to the server's.
+    void changeTitle();
+    void setCustomTitle(const QString &text);
+    void runMacro(const QString &text);
+    // Add Keyword: starts from the selected text.
+    void addKeyword();
     void clearScrollback();
     void resetTerminal();
     void focusTerminal();
 
     // Optional keyring support: provider(user, host, port) -> password.
     using PasswordLookup = std::function<void(const QString &user,
-        const QString &host, int port,
+        const QString &host, int port, bool passphrase,
         std::function<void(bool found, const QString &pw)> done)>;
     void setPasswordLookup(PasswordLookup f);
+
+    // Send Saved Password, for prompts inside the session such as sudo. The
+    // provider lists the credentials, the one linked to this tab first.
+    struct SavedPassword {
+        QString name, account;
+    };
+    using SavedPasswords = std::function<QList<SavedPassword>()>;
+    void setSavedPasswords(SavedPasswords f) { m_savedPasswords = std::move(f); }
+    void sendSavedPassword(const QString &name, const QString &account);
+
+    // Options > Terminal changed: apply the mouse settings to every tab.
+    static void reloadMousePrefs();
+    // The keyword list or its on/off switch changed: repaint every tab.
+    static void reloadHighlights();
 
     static QIcon iconForProtocol(int proto);
     // A back end's PuTTY protocol number from its id ("serial", "localshell"...).
@@ -98,13 +135,31 @@ private:
     void onPrompt(const sshlx_prompt_request *req);
     void writeClipboard(int clip, const QString &text, bool mustDeselect);
     void requestPaste(int clip);
+    QString allText();
+    void deliverPaste(const QString &text);
+    void applyMousePrefs();
+    void refreshFindIndex();
+    void runFind();
+    void stepFind(int delta);
+    void showMatch();
+    void closeFind();
+    void onRightClick(const QPoint &globalPos, const QPoint &cell, bool ctrl);
 
     sshlx_session *m_session = nullptr;
+    QString m_customTitle, m_serverTitle;
     QString m_displayName, m_title, m_connectionId, m_serialById, m_savedSession;
     TerminalView *m_view;
     QScrollBar *m_scroll;
     QHBoxLayout *m_termRow;
     PromptBar *m_prompts;
+    ConfigPush *m_push;
+    ConfigPushBar *m_pushBar;
+    FindBar *m_findBar;
+    struct FindMatch { int row, start, len; };
+    QStringList m_findRows;       // every row of the buffer, oldest first
+    QList<FindMatch> m_matches;
+    int m_matchIndex = -1;
+    bool m_findStale = true;      // output arrived since m_findRows was read
     QFrame *m_reconnectBar;
     QLabel *m_reconnectLabel;
     QPushButton *m_reconnectButton;
@@ -113,4 +168,5 @@ private:
     bool m_ignoreScroll = false;
     QPointer<EventLogDialog> m_eventLog;
     PasswordLookup m_passwordLookup;
+    SavedPasswords m_savedPasswords;
 };

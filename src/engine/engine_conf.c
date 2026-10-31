@@ -33,10 +33,15 @@ sshlx_strlist *sshlx_saved_sessions_list(void)
     return l;
 }
 
+/* PuTTY's built-in 2000 lines is short for device work. Anything saved
+ * keeps its own value, so sessions stored by PuTTY are not rewritten. */
+#define SSHLX_DEFAULT_SCROLLBACK 128000
+
 sshlx_conf *sshlx_conf_new_default(void)
 {
     Conf *c = conf_new();
-    do_defaults(NULL, c);
+    if (!do_defaults(NULL, c))
+        conf_set_int(c, CONF_savelines, SSHLX_DEFAULT_SCROLLBACK);
     return SCONF_OF(c);
 }
 
@@ -44,6 +49,8 @@ sshlx_conf *sshlx_conf_load(const char *session_name, bool *exists_out)
 {
     Conf *c = conf_new();
     bool exists = do_defaults(session_name, c);
+    if (!exists)
+        conf_set_int(c, CONF_savelines, SSHLX_DEFAULT_SCROLLBACK);
     if (exists_out)
         *exists_out = exists;
     return SCONF_OF(c);

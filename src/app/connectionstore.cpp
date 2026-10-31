@@ -72,6 +72,15 @@ sshlx_conf *ConnectionStore::effectiveConf(const ConnectionNode *n) const
         if (key >= 0)
             sshlx_conf_key_import(c, key, it.value().toUtf8().constData());
     }
+    // Last, so a credential beats both the session and folder values.
+    if (const Credential *cred = m_tree.resolveCredential(n)) {
+        if (!cred->username.isEmpty())
+            sshlx_conf_set_str(c, sshlx_conf_key_find("username"),
+                               cred->username.toUtf8().constData());
+        if (!cred->keyFile.isEmpty())
+            sshlx_conf_set_str(c, sshlx_conf_key_find("keyfile"),
+                               cred->keyFile.toUtf8().constData());
+    }
     return c;
 }
 
@@ -144,6 +153,7 @@ ConnectionNode *ConnectionStore::duplicate(ConnectionNode *n)
     d->icon = n->icon;
     d->panel = n->panel;
     d->inherit = n->inherit;
+    d->credential = n->credential;
     save();
     emit structureChanged();
     return d;

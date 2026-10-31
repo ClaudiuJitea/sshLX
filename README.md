@@ -28,6 +28,11 @@
   - per-device rules (*Always connect / Never ask*) survive renumbering;
   - tabs reconnect when their device comes back;
   - a permission error explains the `dialout` group fix.
+- **Terminal mouse:** selecting copies, right click pastes (or shows the menu, or extends the selection as in PuTTY: Options → Terminal), and Ctrl + right click or the Menu key always shows the menu. Pasting several lines asks first.
+- **Paste Configuration:** sends a config to a device line by line, waiting for the prompt after each. On an error, a question or silence it pauses in the tab so you can amend the line, skip it or answer, then carries on from there. Handles `--More--` pagers and Cisco banners, and takes text from the clipboard or a file.
+- **Terminal menu:** Select All, Find in Terminal (Ctrl+Shift+F), Save and Print Terminal Text, Clear Terminal, your own macros, Change Terminal Title, and **links** that open with Ctrl + click.
+- **Keyword highlighting:** colour words or regular expressions in live output, each with its own colours, in priority order. Select text and choose Add Keyword, or manage the list in Options → Highlighting. Ctrl+Shift+H toggles it.
+- **Credentials Manager:** shared logins (user name, password, private key and its passphrase) linked to connections or whole folders. Change one and every linked connection uses it at its next login. Secrets are kept only in the system keyring. For prompts inside a session, such as `sudo`, use **Send Saved Password** in the terminal menu.
 - **In-tab prompts** for host keys, weak crypto and log files, with a **Reconnect** bar when a session ends.
 - **Opt-in password storage** in the system keyring (GNOME Keyring / KWallet), never in a file.
 - **Dark and light themes,** configurable shortcuts and an interface font size setting.
@@ -43,16 +48,16 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.6.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.7.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.6.0-x86_64.AppImage && ./sshLX-0.6.0-x86_64.AppImage
+chmod +x sshLX-0.7.0-x86_64.AppImage && ./sshLX-0.7.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
 
 ## Build from source
 
-You need CMake ≥ 3.21, a C/C++17 compiler, Perl, Ninja and Qt ≥ 6.2 (Widgets, DBus). `libsecret-1-dev` is optional and enables GNOME Keyring support.
+You need CMake ≥ 3.21, a C/C++17 compiler, Perl, Ninja and Qt ≥ 6.2 (Widgets, DBus), plus `libsecret-1-dev` for the system keyring. Saved passwords and the Credentials Manager need it; to build without the keyring, pass `-DSSHLX_KEYCHAIN=OFF`.
 
 ```sh
 git clone https://github.com/ClaudiuJitea/sshLX.git

@@ -1,4 +1,6 @@
 #include "mainwindow.h"
+#include "credentialsdialog.h"
+#include "highlightrules.h"
 #include "dialogkit.h"
 #include "icons.h"
 
@@ -286,9 +288,54 @@ void MainWindow::buildMenus()
     });
     sc.add("tabs.close", closeTab, QKeySequence("Ctrl+Shift+W"));
 
+    // In the menu bar rather than the rebuilt Session menu, so their keys
+    // work whether or not a menu has been opened.
+    QMenu *edit = menuBar()->addMenu(tr("&Edit"));
+    QAction *copyAct = edit->addAction(Icons::get("copy"), tr("&Copy"), this, [this] {
+        if (current())
+            current()->copy();
+    });
+    sc.add("edit.copy", copyAct, QKeySequence("Ctrl+Shift+C"));
+    QAction *pasteAct = edit->addAction(Icons::get("paste"), tr("&Paste"), this, [this] {
+        if (current())
+            current()->paste();
+    });
+    sc.add("edit.paste", pasteAct, QKeySequence("Ctrl+Shift+V"));
+    QAction *selectAllAct = edit->addAction(tr("Select &All"), this, [this] {
+        if (current())
+            current()->selectAll();
+    });
+    sc.add("edit.selectAll", selectAllAct, QKeySequence("Ctrl+Shift+A"));
+    QAction *pushAct = edit->addAction(Icons::get("paste"), tr("Paste Con&figuration..."), this, [this] {
+        if (current())
+            current()->pasteConfiguration();
+    });
+    sc.add("edit.pasteConfiguration", pushAct, QKeySequence());
+    QAction *searchAct = edit->addAction(Icons::get("search"), tr("&Find in Terminal..."), this, [this] {
+        if (current())
+            current()->findInTerminal();
+    });
+    sc.add("edit.findInTerminal", searchAct, QKeySequence("Ctrl+Shift+F"));
+    edit->addSeparator();
+    QAction *keywordAct = edit->addAction(Icons::get("palette"), tr("Add &Keyword..."), this, [this] {
+        if (current())
+            current()->addKeyword();
+    });
+    sc.add("edit.addKeyword", keywordAct, QKeySequence());
+    QAction *toggleKeywords = edit->addAction(tr("Toggle Keyword &Highlighting"), this, [] {
+        HighlightSet::setEnabled(!HighlightSet::enabled());
+        SessionWidget::reloadHighlights();
+    });
+    sc.add("edit.toggleKeywords", toggleKeywords, QKeySequence("Ctrl+Shift+H"));
+
     QMenu *tools = menuBar()->addMenu(tr("&Tools"));
     QAction *opts = tools->addAction(Icons::get("settings"), tr("&Options..."), this, &MainWindow::showOptions);
     sc.add("tools.options", opts, QKeySequence());
+    QAction *credentials = tools->addAction(Icons::get("lock"), tr("&Credentials Manager..."), this, [this] {
+        CredentialsDialog dlg(m_store, this);
+        dlg.exec();
+    });
+    sc.add("tools.credentials", credentials, QKeySequence());
     QAction *evlog = tools->addAction(Icons::get("event-log"), tr("&Event Log"), this, [this] {
         if (current())
             current()->showEventLog();
@@ -361,12 +408,32 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
         openSession(s->conf(), s->displayName(), s->connectionId());
     });
     if (!connectionId.isEmpty() && Keyring::enabled()) {
-        const QString account = Keyring::accountFor(connectionId);
-        s->setPasswordLookup([account](const QString &, const QString &, int,
-                                       std::function<void(bool, const QString &)> done) {
-            Keyring::read(account, done);
+        // Resolved at each login, so a rotated password is used on reconnect.
+        s->setPasswordLookup([this, connectionId](const QString &, const QString &, int,
+                                                  bool passphrase,
+                                                  std::function<void(bool, const QString &)> done) {
+            const ConnectionNode *n = m_store->tree().findById(connectionId);
+            if (const Credential *c = n ? m_store->tree().resolveCredential(n) : nullptr)
+                Keyring::read(Keyring::credentialAccount(c->id, passphrase), done);
+            else if (passphrase)
+                done(false, QString());
+            else
+                Keyring::read(Keyring::accountFor(connectionId), done);
         });
     }
+    s->setSavedPasswords([this, connectionId] {
+        const ConnectionNode *n = m_store->tree().findById(connectionId);
+        const Credential *linked = n ? m_store->tree().resolveCredential(n) : nullptr;
+        QList<SessionWidget::SavedPassword> list;
+        for (const Credential &c : m_store->tree().credentials()) {
+            const SessionWidget::SavedPassword p{c.name, Keyring::credentialAccount(c.id, false)};
+            if (linked && c.id == linked->id)
+                list.prepend(p);
+            else
+                list.append(p);
+        }
+        return list;
+    });
     m_docs->addSession(s, panel, dockName);
     if (connectNow)
         s->connectSession();
@@ -561,6 +628,12 @@ void MainWindow::importTree()
         c->session = name;
         c->name = name;
     }
+    // Credentials travel without their secrets: add the ones not known here.
+    QList<Credential> credentials = m_store->tree().credentials();
+    for (const Credential &c : imported.credentials())
+        if (!m_store->tree().credential(c.id))
+            credentials.append(c);
+    m_store->tree().setCredentials(credentials);
     // Graft the imported tree under a new folder, with fresh ids.
     ConnectionNode *dest = m_store->tree().addFolder(
         nullptr, tr("Imported - %1").arg(QFileInfo(path).completeBaseName()));

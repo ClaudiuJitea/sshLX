@@ -44,6 +44,22 @@ public:
     void setCursorCell(int col, int row);
     void setInitialGrid(int cols, int rows) { m_hintCols = cols; m_hintRows = rows; }
     bool usedFallbackFont() const { return m_fallbackFont; }
+    // Keys are dropped while a config push owns the session.
+    void setInputBlocked(bool blocked) { m_inputBlocked = blocked; }
+    // The http(s) link drawn at a cell, or empty.
+    QString linkAt(const QPoint &cell) const;
+    // Keyword colours, or null for none. The set must outlive the view;
+    // call this again whenever it changes.
+    void setHighlights(const class HighlightSet *set);
+    // Capturing: the engine's drawing only updates rowText(), not the picture.
+    // Find in Terminal reads the scrollback a page at a time this way.
+    void setCapturing(bool on) { m_capturing = on; }
+    QString rowText(int row) const;
+    int cursorRow() const { return m_cursorRow; }
+    // Lights up every match of text; empty clears. The current match is
+    // start..start+len (UTF-16 units of rowText) on a screen row, -1 for none.
+    void setFind(const QString &text, bool matchCase);
+    void setFindCurrent(int row, int start, int len);
 
     // Engine draw callbacks (forwarded by SessionWidget).
     bool beginDraw();
@@ -59,7 +75,9 @@ public:
 
 signals:
     void gridResized(int cols, int rows);
-    void contextMenuRequested(const QPoint &globalPos);
+    // A right click the terminal did not use, or the Menu key (as Ctrl).
+    void rightClicked(const QPoint &globalPos, const QPoint &cell, bool ctrl);
+    void linkActivated(const QString &url);
     void fontSizeStep(int delta);
     void keyPressedWhileDisconnected();
 
@@ -82,6 +100,9 @@ protected:
 
 private:
     void recomputeMetrics();
+    void paintHighlights(QPainter &p, const QRect &area);
+    void matchRow(int row);
+    bool overlayActive() const;
     void recreateImage();
     void updateGrid();
     QPoint cellAt(const QPointF &pos) const;
@@ -101,6 +122,21 @@ private:
     QImage m_image;
     std::unique_ptr<QPainter> m_painter;
     QRect m_dirty;
+    // What is on screen, for links and keywords: m_cols by m_rows.
+    struct Cell {
+        char32_t ch = U' ';     // 0 = right half of a wide char
+        QRgb fg = 0, bg = 0;
+        bool bold = false;
+        bool plain = false;     // simple enough to draw again over the image
+    };
+    QVector<Cell> m_cells;
+    const class HighlightSet *m_highlights = nullptr;
+    QVector<QVector<int>> m_rowRules;  // per row, per column: rule index or -1
+    QVector<bool> m_rowStale;
+    std::unique_ptr<class HighlightSet> m_find;
+    int m_findRow = -1, m_findStart = 0, m_findLen = 0;
+    bool m_capturing = false;
+    bool m_inputBlocked = false;
     QColor m_defaultBg = Qt::black;
     int m_cursorCol = 0, m_cursorRow = 0;
     bool m_rawPointer = false, m_busy = false;

@@ -22,6 +22,7 @@ class QLabel;
 class PropertyGrid : public QWidget {
     Q_OBJECT
 public:
+    QStringList credentialNames() const;
     explicit PropertyGrid(ConnectionStore *store, QWidget *parent = nullptr);
     ~PropertyGrid() override;
 

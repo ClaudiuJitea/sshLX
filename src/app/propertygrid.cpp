@@ -61,6 +61,12 @@ public:
         }
         case PropertyDef::Enum: {
             auto *cb = new QComboBox(parent);
+            if (d->key == "@credential") {
+                cb->addItem(PropertyGrid::tr("(none)"), 0);
+                const QStringList names = m_grid->credentialNames();
+                for (int i = 0; i < names.size(); i++)
+                    cb->addItem(names[i], i + 1);
+            }
             for (const auto &e : d->enumValues) {
                 if (d->key == "@icon") {
                     QIcon ic = Icons::forNode(Icons::nodeIcons().value(e.first).key);
@@ -311,6 +317,14 @@ PropertyGrid::~PropertyGrid()
     sshlx_conf_free(m_conf);
 }
 
+QStringList PropertyGrid::credentialNames() const
+{
+    QStringList names;
+    for (const Credential &c : m_store->tree().credentials())
+        names << c.name;
+    return names;
+}
+
 void PropertyGrid::setAlphabetical(bool on)
 {
     m_alphabetical = on;
@@ -380,6 +394,13 @@ QVariant PropertyGrid::editValue(const PropertyDef &d) const
     if (d.key == "@panel") return m_node->panel;
     if (d.key == "@favourite") return m_node->favourite;
     if (d.key == "@password") return QString();   // never read back into the UI
+    if (d.key == "@credential") {
+        const QList<Credential> all = m_store->tree().credentials();
+        for (int i = 0; i < all.size(); i++)
+            if (all[i].id == m_node->credential)
+                return i + 1;
+        return 0;
+    }
     if (d.key == "@icon") {
         const auto &icons = Icons::nodeIcons();
         for (int i = 0; i < icons.size(); i++)
@@ -435,6 +456,12 @@ QVariant PropertyGrid::editValue(const PropertyDef &d) const
 QString PropertyGrid::displayValue(const PropertyDef &d) const
 {
     QVariant v = editValue(d);
+    if (d.key == "@credential") {
+        const Credential *c = m_store->tree().resolveCredential(m_node);
+        if (!c)
+            return tr("(none)");
+        return m_node->credential == c->id ? c->name : tr("%1 (from folder)").arg(c->name);
+    }
     switch (d.kind) {
     case PropertyDef::Enum:
         for (const auto &e : d.enumValues)
@@ -602,6 +629,14 @@ void PropertyGrid::applyValue(const PropertyDef &d, const QVariant &v)
         return;
     m_updating = true;
     // ---- sshLX metadata ----
+    if (d.key == "@credential") {
+        const QList<Credential> all = m_store->tree().credentials();
+        const int i = v.toInt() - 1;
+        m_node->credential = i >= 0 && i < all.size() ? all[i].id : QString();
+        m_updating = false;
+        m_store->touch(m_node);
+        return;
+    }
     if (d.key == "@password") {
         const QString account = Keyring::accountFor(m_node->id);
         QPointer<QTextBrowser> help(m_help);
