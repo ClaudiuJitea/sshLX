@@ -32,6 +32,7 @@
 - **Paste Configuration:** sends a config to a device line by line, waiting for the prompt after each. On an error, a question or silence it pauses in the tab so you can amend the line, skip it or answer, then carries on from there. Handles `--More--` pagers and Cisco banners, and takes text from the clipboard or a file.
 - **Terminal menu:** Select All, Find in Terminal (Ctrl+Shift+F), Save and Print Terminal Text, Clear Terminal, your own macros, Change Terminal Title, and **links** that open with Ctrl + click.
 - **Keyword highlighting:** colour words or regular expressions in live output, each with its own colours, in priority order. Select text and choose Add Keyword, or manage the list in Options → Highlighting. Ctrl+Shift+H toggles it.
+- **File transfer:** right-click an SSH connection or tab and choose **File Transfer** for a two-pane file manager in its own tab: drag files either way, whole folders included, with a queue, a toolbar for rename, delete and new folder on either side, and a filter. It logs in the same way as the connection, saved passwords included. Devices without SFTP, such as many switches, get SCP instead: type the remote path and send or fetch one file at a time.
 - **Credentials Manager:** shared logins (user name, password, private key and its passphrase) linked to connections or whole folders. Change one and every linked connection uses it at its next login. Secrets are kept only in the system keyring. For prompts inside a session, such as `sudo`, use **Send Saved Password** in the terminal menu.
 - **In-tab prompts** for host keys, weak crypto and log files, with a **Reconnect** bar when a session ends.
 - **Opt-in password storage** in the system keyring (GNOME Keyring / KWallet), never in a file.
@@ -48,9 +49,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.7.0_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.7.1_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.7.0-x86_64.AppImage && ./sshLX-0.7.0-x86_64.AppImage
+chmod +x sshLX-0.7.1-x86_64.AppImage && ./sshLX-0.7.1-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.

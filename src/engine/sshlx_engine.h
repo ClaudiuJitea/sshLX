@@ -169,6 +169,12 @@ typedef struct sshlx_protocol {
 } sshlx_protocol;
 size_t sshlx_protocol_count(void);
 const sshlx_protocol *sshlx_protocol_get(size_t i);
+/* A copy of an SSH conf for a file transfer connection: runs command (a
+ * subsystem if subsystem is true) with no pty, forwarding or session log.
+ * Caller frees with sshlx_conf_free. */
+sshlx_conf *sshlx_conf_for_transfer(const sshlx_conf *conf, const char *command,
+                                    bool subsystem);
+
 int sshlx_conf_key_protocol(void);   /* convenience: key of CONF_protocol */
 
 /* ======================================================================
@@ -398,6 +404,18 @@ typedef enum {
 sshlx_key_result sshlx_session_key(sshlx_session *s, const sshlx_key_event *ev);
 /* IME commit / plain text typed. */
 void sshlx_session_text(sshlx_session *s, const char *utf8);
+
+/* Raw mode, for file transfer: once the session has started, the remote
+ * stdout goes only to the output_data callback, never to the terminal. The
+ * login and stderr still appear there. The callback must not disconnect
+ * the session directly: it runs inside the SSH code. send_bytes bypasses the line discipline, so binary
+ * data arrives unchanged. */
+void sshlx_session_set_raw(sshlx_session *s, bool raw);
+void sshlx_session_send_bytes(sshlx_session *s, const char *data, size_t len);
+size_t sshlx_session_send_backlog(sshlx_session *s);
+/* True once the remote command or subsystem has really started. CONNECTED
+ * comes earlier, and bytes sent in between reach the server too soon. */
+bool sshlx_session_send_ready(sshlx_session *s);
 void sshlx_session_preedit(sshlx_session *s, const char *utf8_or_null);
 /* Send raw bytes to the backend as if typed (e.g. "send command"). */
 void sshlx_session_send_raw(sshlx_session *s, const char *data, size_t len);

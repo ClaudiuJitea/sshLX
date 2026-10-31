@@ -68,6 +68,23 @@ Automated against a fake device by `ctest` (`tests/session_e2e_test.cpp`); these
 | 1e.4 | A wrong stored password | Offered once, then PuTTY asks in the terminal |
 | 1e.5 | Lock the keyring or stop its service, then Save | Error shown; nothing is saved and the dialog stays open |
 
+## 1f. File transfer
+
+- [ ] Right-click an SSH connection → File Transfer: login shows in the tab, then the two panes.
+- [ ] A linked credential logs in with no prompt.
+- [ ] Drag a file each way, then a folder with subfolders. Compare checksums.
+- [ ] Replacing an existing file asks first. Skip leaves it alone.
+- [ ] Cancel a large download over an existing file: the old file is unchanged.
+- [ ] Cancel a large upload: no partial file is left on the server.
+- [ ] Rename, New Folder and Delete on the server side. Closing mid-transfer warns.
+- [ ] Click the left pane: the same toolbar buttons now act on this computer, and Delete moves to the Trash.
+- [ ] F5, F2 and Del work in the panel, and still reach the device in a terminal tab.
+- [ ] Filter and Hidden Files change both sides, and Hidden Files is remembered.
+- [ ] Unplug the network mid-transfer: the job fails, Reconnect brings the panes back.
+- [ ] A switch with `ip scp server enable` and no SFTP: the tab says SCP only; send and fetch a file on `flash:`.
+- [ ] Test SSH and SFTP without a listening port, using PuTTY's uppity on stdio:
+      `SSHLX_E2E_SFTP_COMMAND="cd DIR && exec uppity --hostkey KEY --allow-none-auth --sessiondir DIR" SSHLX_E2E_SFTP_DIR=DIR session-e2e-test transferTabOverRealSsh`
+
 ## 2. Settings compatibility
 
 | # | Step | Expected |

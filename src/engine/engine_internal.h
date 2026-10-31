@@ -103,6 +103,7 @@ struct sshlx_session {
     pending_prompt *prompts;
     sshlx_prompt_id next_prompt_id;
     bool password_hook;
+    bool raw_output;
     bool password_hook_declined;
     bool passphrase_hook_declined;
     char *hook_password;      /* answer waiting to be consumed */

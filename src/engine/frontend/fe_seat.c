@@ -193,9 +193,14 @@ static size_t sshlx_seat_output(Seat *seat, SeatOutputType type,
                                 const void *data, size_t len)
 {
     sshlx_session *s = SESSION_OF(seat);
-    (void)type;
+    /* Before the session starts, stdout carries the login's own messages. */
+    if (s->raw_output && type == SEAT_OUTPUT_STDOUT && s->state == SSHLX_STATE_CONNECTED) {
+        if (s->cb.output_data && !s->dead)
+            UI_CALL(s, output_data, data, len);
+        return 0;
+    }
     size_t backlog = term_data(s->term, data, len);
-    if (s->cb.output_data && !s->dead)
+    if (s->cb.output_data && !s->dead && !s->raw_output)
         UI_CALL(s, output_data, data, len);
     return backlog;
 }

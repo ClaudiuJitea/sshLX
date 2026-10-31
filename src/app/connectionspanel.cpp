@@ -343,6 +343,8 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
         menu.addAction(Icons::get("settings"), tr("Connect with &Options..."), this,
                        [this, n] { emit openWithOptionsRequested(n); });
         menu.addSeparator();
+        menu.addAction(Icons::get("export"), tr("File &Transfer"), this,
+                       [this, n] { emit fileTransferRequested(n); });
         menu.addAction(Icons::get("copy"), tr("D&uplicate"), this, &ConnectionsPanel::duplicateSelected);
         QAction *fav = menu.addAction(tr("&Favourite"));
         fav->setCheckable(true);

@@ -6,7 +6,7 @@ set(CMAKE_AUTORCC ON)
 
 # Connection tree model: Qt Core only (unit-testable without the engine).
 add_library(sshlx-model STATIC model/connectiontree.cpp model/serialrules.cpp
-  model/configpush.cpp model/highlightrules.cpp)
+  model/configpush.cpp model/highlightrules.cpp model/sftpclient.cpp model/scpclient.cpp)
 target_include_directories(sshlx-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/model)
 target_link_libraries(sshlx-model PUBLIC Qt6::Core)
 
@@ -34,6 +34,7 @@ add_library(sshlx-app STATIC
   configpushbar.cpp
   configpushdialog.cpp
   credentialsdialog.cpp
+  filetransferpanel.cpp
   highlightruledialog.cpp
   macros.cpp
   findbar.cpp
@@ -118,6 +119,11 @@ if(TARGET Qt6::Test)
   add_executable(credentials-test ${CMAKE_SOURCE_DIR}/tests/credentials_test.cpp)
   target_link_libraries(credentials-test PRIVATE sshlx-model Qt6::Test)
   add_test(NAME credentials COMMAND credentials-test)
+  add_executable(transfer-test ${CMAKE_SOURCE_DIR}/tests/transfer_test.cpp)
+  target_link_libraries(transfer-test PRIVATE sshlx-model Qt6::Test)
+  target_compile_definitions(transfer-test PRIVATE
+    SSHLX_FAKE_SFTP="${CMAKE_SOURCE_DIR}/tests/fake_sftp.py")
+  add_test(NAME transfer COMMAND transfer-test)
   add_executable(session-e2e-test ${CMAKE_SOURCE_DIR}/tests/session_e2e_test.cpp)
   target_link_libraries(session-e2e-test PRIVATE sshlx-app Qt6::Test)
   target_compile_definitions(session-e2e-test PRIVATE

@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "credentialsdialog.h"
+#include "filetransferpanel.h"
 #include "highlightrules.h"
 #include "dialogkit.h"
 #include "icons.h"
@@ -134,6 +135,11 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     QSettings st;
     m_serial = new SerialManager(this, m_bannerBar, st.value("serial/udev", true).toBool());
     m_connections->setSerialPorts(m_serial->ports());
+    connect(m_connections, &ConnectionsPanel::fileTransferRequested, this, [this](ConnectionNode *n) {
+        sshlx_conf *c = m_store->effectiveConf(n);
+        openFileTransfer(c, n->name, n->id);
+        sshlx_conf_free(c);
+    });
     connect(m_connections, &ConnectionsPanel::openSerialRequested, this,
             [this](int row, bool withOptions) {
         if (row >= 0 && row < m_serial->ports()->count())
@@ -336,6 +342,15 @@ void MainWindow::buildMenus()
         dlg.exec();
     });
     sc.add("tools.credentials", credentials, QKeySequence());
+    QAction *transfer = tools->addAction(Icons::get("export"), tr("&File Transfer"), this, [this] {
+        if (SessionWidget *s = current())
+            openFileTransfer(s->conf(), s->displayName(), s->connectionId());
+        else
+            DialogKit::warning(this, tr("File Transfer"),
+                               tr("Open an SSH tab first, or right-click a connection and "
+                                  "choose File Transfer."));
+    });
+    sc.add("tools.fileTransfer", transfer, QKeySequence());
     QAction *evlog = tools->addAction(Icons::get("event-log"), tr("&Event Log"), this, [this] {
         if (current())
             current()->showEventLog();
@@ -405,22 +420,15 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
     connect(s, &SessionWidget::saveAppearanceRequested, this, [this, s] { saveAppearance(s, false); });
     connect(s, &SessionWidget::defaultAppearanceRequested, this, [this, s] { saveAppearance(s, true); });
     connect(s, &SessionWidget::duplicateRequested, this, [this, s] {
-        openSession(s->conf(), s->displayName(), s->connectionId());
+        if (s->isFileTransfer())
+            openFileTransfer(s->conf(), s->displayName(), s->connectionId());
+        else
+            openSession(s->conf(), s->displayName(), s->connectionId());
     });
-    if (!connectionId.isEmpty() && Keyring::enabled()) {
-        // Resolved at each login, so a rotated password is used on reconnect.
-        s->setPasswordLookup([this, connectionId](const QString &, const QString &, int,
-                                                  bool passphrase,
-                                                  std::function<void(bool, const QString &)> done) {
-            const ConnectionNode *n = m_store->tree().findById(connectionId);
-            if (const Credential *c = n ? m_store->tree().resolveCredential(n) : nullptr)
-                Keyring::read(Keyring::credentialAccount(c->id, passphrase), done);
-            else if (passphrase)
-                done(false, QString());
-            else
-                Keyring::read(Keyring::accountFor(connectionId), done);
-        });
-    }
+    connect(s, &SessionWidget::fileTransferRequested, this, [this, s] {
+        openFileTransfer(s->conf(), s->displayName(), s->connectionId());
+    });
+    attachPasswords(s, connectionId);
     s->setSavedPasswords([this, connectionId] {
         const ConnectionNode *n = m_store->tree().findById(connectionId);
         const Credential *linked = n ? m_store->tree().resolveCredential(n) : nullptr;
@@ -438,6 +446,46 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
     if (connectNow)
         s->connectSession();
     writeOpenTabsBreadcrumb();
+    return s;
+}
+
+void MainWindow::attachPasswords(SessionWidget *s, const QString &connectionId)
+{
+    if (!connectionId.isEmpty() && Keyring::enabled()) {
+        // Resolved at each login, so a rotated password is used on reconnect.
+        s->setPasswordLookup([this, connectionId](const QString &, const QString &, int,
+                                                  bool passphrase,
+                                                  std::function<void(bool, const QString &)> done) {
+            const ConnectionNode *n = m_store->tree().findById(connectionId);
+            if (const Credential *c = n ? m_store->tree().resolveCredential(n) : nullptr)
+                Keyring::read(Keyring::credentialAccount(c->id, passphrase), done);
+            else if (passphrase)
+                done(false, QString());
+            else
+                Keyring::read(Keyring::accountFor(connectionId), done);
+        });
+    }
+}
+
+SessionWidget *MainWindow::openFileTransfer(const sshlx_conf *conf, const QString &name,
+                                            const QString &connectionId)
+{
+    if (sshlx_conf_get_int(conf, sshlx_conf_key_protocol()) != SessionWidget::protocolId("ssh")) {
+        DialogKit::warning(this, tr("File Transfer"),
+                           tr("File transfer needs an SSH connection, and \"%1\" is not one.")
+                               .arg(name));
+        return nullptr;
+    }
+    sshlx_conf *c = sshlx_conf_for_transfer(conf, "sftp", true);
+    SessionWidget *s = openSession(c, name, connectionId, false);
+    sshlx_conf_free(c);
+    s->setCustomTitle(tr("Files: %1").arg(name));
+    auto *panel = new FileTransferPanel(s, s->conf(), [this, connectionId](SessionWidget *w) {
+        attachPasswords(w, connectionId);
+    });
+    s->setFilePanel(panel, [panel] { return panel->busy(); });
+    writeOpenTabsBreadcrumb();
+    s->connectSession();
     return s;
 }
 
@@ -766,6 +814,8 @@ QStringList MainWindow::openTabEntries() const
 {
     QStringList r;
     for (SessionWidget *s : m_docs->sessions()) {
+        if (s->isFileTransfer())
+            continue;
         QString kind, ref;
         if (!s->connectionId().isEmpty()) {
             kind = "connection";

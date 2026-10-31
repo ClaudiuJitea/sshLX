@@ -199,6 +199,29 @@ int sshlx_conf_key_find(const char *name)
     return -1;
 }
 
+sshlx_conf *sshlx_conf_for_transfer(const sshlx_conf *conf, const char *command,
+                                    bool subsystem)
+{
+    Conf *c = conf_copy(CONF_OF(conf));
+    char *key;
+
+    conf_set_str(c, CONF_remote_cmd, command);
+    conf_set_str(c, CONF_remote_cmd2, "");
+    conf_set_bool(c, CONF_ssh_subsys, subsystem);
+    conf_set_bool(c, CONF_ssh_subsys2, false);
+    conf_set_bool(c, CONF_ssh_no_shell, false);
+    conf_set_bool(c, CONF_nopty, true);
+    conf_set_bool(c, CONF_x11_forward, false);
+    conf_set_bool(c, CONF_agentfwd, false);
+    conf_set_bool(c, CONF_ssh_connection_sharing, false);
+    conf_set_int(c, CONF_logtype, LGTYP_NONE);
+    conf_set_int(c, CONF_close_on_exit, FORCE_OFF);
+    /* A second connection must not fight the first for its forwarded ports. */
+    while ((key = conf_get_str_nthstrkey(c, CONF_portfwd, 0)) != NULL)
+        conf_del_str_str(c, CONF_portfwd, key);
+    return (sshlx_conf *)c;
+}
+
 int sshlx_conf_key_protocol(void)
 {
     return CONF_protocol;

@@ -34,6 +34,8 @@ public:
     void openSavedSession(const QString &name);
     // A tab with the user's shell on this machine.
     SessionWidget *openLocalShell(const QString &dockName = QString());
+    SessionWidget *openFileTransfer(const sshlx_conf *conf, const QString &name,
+                                    const QString &connectionId);
     void openConnection(ConnectionNode *n, bool withOptions = false,
                         const QString &dockName = QString());
     // Brings forward the connection's open tab (reconnecting it if it has
@@ -61,6 +63,7 @@ protected:
     void closeEvent(QCloseEvent *e) override;
 
 private:
+    void attachPasswords(SessionWidget *s, const QString &connectionId);
     void buildMenus();
     void rebuildSavedSessionsMenu();
     bool confirmClose(SessionWidget *s);

@@ -1,7 +1,12 @@
 // A real SessionWidget and engine, driving tests/fake_ios.py through a pty:
 // mouse copy and paste, the paste guard, and a config push with an amended
 // line. Needs a Qt platform (offscreen will do); run from CTest.
+#include <QAction>
 #include <QApplication>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QTreeView>
 #include <QClipboard>
 #include <QElapsedTimer>
 #include <QFile>
@@ -22,6 +27,7 @@
 #include "configpushbar.h"
 #include "connectionstore.h"
 #include "credentialsdialog.h"
+#include "filetransferpanel.h"
 #include "keyring.h"
 #include "promptbar.h"
 #include "configpushdialog.h"
@@ -612,6 +618,197 @@ private slots:
             once->click();
         QTRY_VERIFY_WITH_TIMEOUT(screenText().contains("logged in with rotated-secret"), 10000);
         QCOMPARE(asked, QStringList({"passphrase", "password"}));
+    }
+
+    void transferTabOverRealSsh()
+    {
+        // A command that speaks SSH on stdio, such as PuTTY's uppity, so no
+        // test server ever listens on anything.
+        const QByteArray server = qgetenv("SSHLX_E2E_SFTP_COMMAND");
+        const QString serverDir = qEnvironmentVariable("SSHLX_E2E_SFTP_DIR");
+        if (server.isEmpty())
+            QSKIP("no test SFTP server");
+        sshlx_conf *base = sshlx_conf_new_default();
+        sshlx_conf_set_int(base, sshlx_conf_key_protocol(), SessionWidget::protocolId("ssh"));
+        sshlx_conf_set_str(base, sshlx_conf_key_find("host"), "testserver");
+        sshlx_conf_set_int(base, sshlx_conf_key_find("port"), 22);
+        sshlx_conf_set_str(base, sshlx_conf_key_find("username"), "tester");
+        sshlx_conf_set_int(base, sshlx_conf_key_find("proxy_type"), 5);    // PROXY_CMD
+        sshlx_conf_set_str(base, sshlx_conf_key_find("proxy_telnet_command"), server.constData());
+        sshlx_conf_set_bool(base, sshlx_conf_key_find("even_proxy_localhost"), true);
+        QTemporaryDir localDir;
+        QByteArray payload(2 * 1024 * 1024 + 77, Qt::Uninitialized);
+        for (int i = 0; i < payload.size(); i++)
+            payload[i] = char((i * 31 + (i >> 8)) & 0xff);
+        const QString name = "payload with space.bin";
+        const auto write = [](const QString &p, const QByteArray &d) {
+            QDir().mkpath(QFileInfo(p).path());
+            QFile f(p);
+            QVERIFY(f.open(QIODevice::WriteOnly));
+            f.write(d);
+        };
+        const auto read = [](const QString &p) {
+            QFile f(p);
+            return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+        };
+        write(localDir.filePath(name), payload);
+        write(localDir.filePath("tree/sub/inner.txt"), "inner");
+        auto accept = [](QWidget *in) {
+            for (PromptBar *b : in->findChildren<PromptBar *>())
+                if (QPushButton *a = button(b, "Accept"))
+                    a->click();
+        };
+
+        // SFTP: browse, upload, download, a whole folder.
+        {
+            sshlx_conf *c = sshlx_conf_for_transfer(base, "sftp", true);
+            SessionWidget w(c, "real");
+            sshlx_conf_free(c);
+            auto *panel = new FileTransferPanel(&w, w.conf(), {});
+            w.setFilePanel(panel, [panel] { return panel->busy(); });
+            panel->setLocalDir(localDir.path());
+            w.resize(1000, 640);
+            w.show();
+            w.connectSession();
+            auto *remote = panel->findChild<QTreeWidget *>("remoteView");
+            auto *queue = panel->findChild<QTreeWidget *>("transferQueue");
+            auto why = [&] {
+                char *t = sshlx_session_all_text(w.sessionForTests());
+                QString r = QString("state %1, error '%2', screen '%3'").arg(int(w.state()))
+                    .arg(w.lastError(), QString::fromUtf8(t ? t : ""));
+                sshlx_free(t);
+                const char *const *lines;
+                const size_t n = sshlx_session_event_log(w.sessionForTests(), &lines);
+                for (size_t i = n > 12 ? n - 12 : 0; i < n; i++)
+                    r += '\n' + QString::fromUtf8(lines[i]);
+                for (QLabel *l : panel->findChildren<QLabel *>())
+                    r += "\nlabel: " + l->text();
+                return r;
+            };
+            QTRY_VERIFY2_WITH_TIMEOUT((accept(&w), remote->isVisible()), qPrintable(why()), 10000);
+            QTRY_COMPARE(panel->remoteDir(), serverDir);
+
+            panel->uploadPaths({localDir.filePath(name), localDir.filePath("tree")});
+            QTRY_VERIFY_WITH_TIMEOUT(!panel->busy(), 20000);
+            QCOMPARE(read(serverDir + '/' + name), payload);
+            QCOMPARE(read(serverDir + "/tree/sub/inner.txt"), QByteArray("inner"));
+
+            QTemporaryDir back;
+            panel->setLocalDir(back.path());
+            QTRY_VERIFY(!remote->findItems(name, Qt::MatchExactly).isEmpty());
+            remote->clearSelection();
+            remote->findItems(name, Qt::MatchExactly).first()->setSelected(true);
+            remote->findItems("tree", Qt::MatchExactly).first()->setSelected(true);
+            panel->findChild<QAction *>("download")->trigger();
+            QTRY_VERIFY_WITH_TIMEOUT(queue->topLevelItemCount() >= 6 && !panel->busy(), 20000);
+            QCOMPARE(read(back.filePath(name)), payload);
+            QCOMPARE(read(back.filePath("tree/sub/inner.txt")), QByteArray("inner"));
+            // Drag and drop, with what each pane's own model puts in the drag.
+            auto *localTree = panel->findChild<QTreeView *>("localView");
+            auto drop = [&](QWidget *target, QMimeData *mime) {
+                const QPoint at(40, 40);
+                QDragEnterEvent enter(at, Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(target, &enter);
+                if (!enter.isAccepted())
+                    return false;
+                QDropEvent dropped(QPointF(at), Qt::CopyAction, mime, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(target, &dropped);
+                return dropped.isAccepted();
+            };
+            write(back.filePath("dragged-up.txt"), "dragged up");
+            auto *fsModel = localTree->model();
+            const QModelIndex dirIndex = localTree->rootIndex();
+            QTRY_VERIFY(fsModel->rowCount(dirIndex) > 0);
+            QModelIndex upIndex;
+            QTRY_VERIFY([&] {
+                for (int i = 0; i < fsModel->rowCount(dirIndex); i++)
+                    if (fsModel->index(i, 0, dirIndex).data().toString() == "dragged-up.txt")
+                        upIndex = fsModel->index(i, 0, dirIndex);
+                return upIndex.isValid();
+            }());
+            std::unique_ptr<QMimeData> upMime(fsModel->mimeData({upIndex}));
+            QVERIFY(drop(remote->viewport(), upMime.get()));
+            QTRY_COMPARE(read(serverDir + "/dragged-up.txt"), QByteArray("dragged up"));
+            QTRY_VERIFY(!panel->busy());
+
+            QTRY_VERIFY(!remote->findItems("dragged-up.txt", Qt::MatchExactly).isEmpty());
+            remote->clearSelection();
+            auto *downItem = remote->findItems("dragged-up.txt", Qt::MatchExactly).first();
+            downItem->setSelected(true);
+            std::unique_ptr<QMimeData> downMime(
+                remote->model()->mimeData({remote->indexFromItem(downItem)}));
+            QVERIFY(!drop(remote->viewport(), downMime.get()));    // not onto itself
+            QTemporaryDir dragTarget;
+            panel->setLocalDir(dragTarget.path());
+            QVERIFY(drop(localTree->viewport(), downMime.get()));
+            QTRY_COMPARE(read(dragTarget.filePath("dragged-up.txt")), QByteArray("dragged up"));
+            QTRY_VERIFY(!panel->busy());
+            remote->clearSelection();
+            remote->findItems(name, Qt::MatchExactly).first()->setSelected(true);
+            remote->findItems("tree", Qt::MatchExactly).first()->setSelected(true);
+
+            // The toolbar follows the selection and the active side.
+            auto action = [&](const char *n) { return panel->findChild<QAction *>(n); };
+            QVERIFY(action("download")->isEnabled());
+            QVERIFY(!action("rename")->isEnabled());      // two selected
+            remote->clearSelection();
+            QVERIFY(!action("download")->isEnabled() && !action("delete")->isEnabled());
+            remote->findItems(name, Qt::MatchExactly).first()->setSelected(true);
+            QVERIFY(action("rename")->isEnabled() && action("delete")->isEnabled());
+
+            write(serverDir + "/.hidden", "x");
+            action("refresh")->trigger();
+            QTRY_VERIFY(!remote->findItems(".hidden", Qt::MatchExactly).isEmpty());
+            auto *dot = remote->findItems(".hidden", Qt::MatchExactly).first();
+            QVERIFY(dot->isHidden());
+            action("hiddenFiles")->trigger();
+            QVERIFY(!dot->isHidden());
+            action("hiddenFiles")->trigger();
+            auto *filter = panel->findChild<QLineEdit *>("transferFilter");
+            filter->setText("PAYLOAD");
+            QVERIFY(remote->findItems("tree", Qt::MatchExactly).first()->isHidden());
+            QVERIFY(!remote->findItems(name, Qt::MatchExactly).first()->isHidden());
+            filter->clear();
+            QVERIFY(!remote->findItems("tree", Qt::MatchExactly).first()->isHidden());
+
+            const QString shot = qEnvironmentVariable("SSHLX_E2E_TRANSFER_SHOT");
+            if (!shot.isEmpty())
+                w.grab().save(shot);
+            QVERIFY(w.closeWarning().isEmpty());
+            sshlx_session_disconnect(w.sessionForTests());
+            QTRY_VERIFY(w.state() == SSHLX_STATE_DISCONNECTED);
+            QVERIFY(!panel->scpOnly());        // losing it later is not a refusal
+        }
+
+        // No SFTP on this "device": SCP mode, a connection for each file.
+        {
+            sshlx_conf *c = sshlx_conf_for_transfer(base, "no-such-subsystem", true);
+            SessionWidget w(c, "device");
+            sshlx_conf_free(c);
+            auto *panel = new FileTransferPanel(&w, w.conf(), {});
+            w.setFilePanel(panel, [panel] { return panel->busy(); });
+            panel->setLocalDir(localDir.path());
+            w.resize(1000, 640);
+            w.show();
+            w.connectSession();
+            QTRY_VERIFY_WITH_TIMEOUT((accept(&w), panel->scpOnly()), 10000);
+            QVERIFY(panel->isVisible());
+            auto *path = panel->findChild<QLineEdit *>("scpPath");
+            path->setText(serverDir + "/via-scp.bin");
+            panel->uploadPaths({localDir.filePath(name)});
+            QTRY_VERIFY_WITH_TIMEOUT((accept(&w), !panel->busy()), 20000);
+            QCOMPARE(read(serverDir + "/via-scp.bin"), payload);
+
+            QTemporaryDir back;
+            panel->setLocalDir(back.path());
+            QVERIFY(!panel->findChild<QAction *>("refresh")->isEnabled());
+            QVERIFY(!panel->findChild<QAction *>("newFolder")->isEnabled());
+            panel->findChild<QAction *>("download")->trigger();
+            QTRY_VERIFY_WITH_TIMEOUT((accept(&w), QFile::exists(back.filePath("via-scp.bin"))), 20000);
+            QTRY_VERIFY(!panel->busy());
+            QCOMPARE(read(back.filePath("via-scp.bin")), payload);
+        }
+        sshlx_conf_free(base);
     }
 
     void cleanupTestCase()

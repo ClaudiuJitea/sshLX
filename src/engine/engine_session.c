@@ -175,6 +175,29 @@ int sshlx_session_connect(sshlx_session *s)
     return 0;
 }
 
+void sshlx_session_set_raw(sshlx_session *s, bool raw)
+{
+    s->raw_output = raw;
+}
+
+void sshlx_session_send_bytes(sshlx_session *s, const char *data, size_t len)
+{
+    if (s->dead || !s->backend)
+        return;
+    backend_send(s->backend, data, len);
+    sshlx_after_entry();
+}
+
+bool sshlx_session_send_ready(sshlx_session *s)
+{
+    return !s->dead && s->backend && backend_sendok(s->backend);
+}
+
+size_t sshlx_session_send_backlog(sshlx_session *s)
+{
+    return s->dead || !s->backend ? 0 : backend_sendbuffer(s->backend);
+}
+
 void sshlx_session_disconnect(sshlx_session *s)
 {
     if (s->dead || !s->backend)

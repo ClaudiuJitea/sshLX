@@ -51,6 +51,20 @@ public:
     int protocol() const;
     TerminalView *view() const { return m_view; }
     sshlx_session *sessionForTests() const { return m_session; }
+    // File transfer. The receiver takes the remote output instead of the
+    // terminal, which stays for the login.
+    void setRawReceiver(std::function<void(const char *, size_t)> f);
+    void sendRaw(const QByteArray &data);
+    size_t sendBacklog() const;
+    bool sendReady() const;
+    // The panel replaces the terminal once shown; the tab owns it.
+    void setFilePanel(QWidget *panel, std::function<bool()> busy);
+    void showFilePanel(bool show);
+    bool isFileTransfer() const { return m_filePanel != nullptr; }
+    void setReconnectBarEnabled(bool on) { m_reconnectBarEnabled = on; updateReconnectBar(); }
+    QString lastError() const { return m_lastError; }
+    // The login finished, whatever became of the session after it.
+    bool loggedIn() const { return m_loggedIn; }
     // Text for a "really close?" prompt, or empty.
     QString closeWarning() const;
 
@@ -119,6 +133,7 @@ signals:
     void exitedWithClose();
     // What the tab can be reopened from changed (for the crash breadcrumb).
     void identityChanged();
+    void fileTransferRequested();
     // Appearance menu: keep this tab's look for its connection, or for
     // every new session.
     void saveAppearanceRequested();
@@ -167,6 +182,10 @@ private:
     int m_lastErrno = 0;
     bool m_ignoreScroll = false;
     QPointer<EventLogDialog> m_eventLog;
+    std::function<void(const char *, size_t)> m_raw;
+    QWidget *m_filePanel = nullptr;
+    std::function<bool()> m_panelBusy;
+    bool m_reconnectBarEnabled = true, m_loggedIn = false;
     PasswordLookup m_passwordLookup;
     SavedPasswords m_savedPasswords;
 };

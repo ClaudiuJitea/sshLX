@@ -203,6 +203,9 @@ void DocumentArea::buildTabMenu(SessionWidget *s, QMenu *menu)
     }
     menu->addAction(Icons::get("connection-new"), tr("D&uplicate"), s,
                     [ps] { if (ps) emit ps->duplicateRequested(ps->displayName()); });
+    if (!s->isFileTransfer() && s->protocol() == SessionWidget::protocolId("ssh"))
+        menu->addAction(Icons::get("export"), tr("File &Transfer"), s,
+                        &SessionWidget::fileTransferRequested);
     menu->addSeparator();
     s->buildAppearanceMenu(menu->addMenu(Icons::get("palette"), tr("&Appearance")));
     menu->addAction(Icons::get("settings"), tr("Change &Settings..."), s,

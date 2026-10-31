@@ -158,6 +158,10 @@ struct SessionTrampolines {
     static void refresh(void *ctx) { W(ctx)->m_view->update(); }
     static void output_data(void *ctx, const char *data, size_t len)
     {
+        if (W(ctx)->m_raw) {
+            W(ctx)->m_raw(data, len);
+            return;
+        }
         W(ctx)->m_findStale = true;
         if (W(ctx)->m_push->running())
             W(ctx)->m_push->feed(data, len);
@@ -444,6 +448,10 @@ QString SessionWidget::closeWarning() const
 {
     if (m_push->running())
         return tr("A configuration is still being sent to this device.");
+    if (m_panelBusy && m_panelBusy())
+        return tr("Files are still being transferred.");
+    if (isFileTransfer())
+        return {};
     char *w = sshlx_session_close_warning(m_session);
     if (!w)
         return {};
@@ -452,8 +460,47 @@ QString SessionWidget::closeWarning() const
     return s;
 }
 
+void SessionWidget::setRawReceiver(std::function<void(const char *, size_t)> f)
+{
+    m_raw = std::move(f);
+    sshlx_session_set_raw(m_session, bool(m_raw));
+}
+
+void SessionWidget::sendRaw(const QByteArray &data)
+{
+    sshlx_session_send_bytes(m_session, data.constData(), size_t(data.size()));
+}
+
+bool SessionWidget::sendReady() const { return sshlx_session_send_ready(m_session); }
+
+size_t SessionWidget::sendBacklog() const { return sshlx_session_send_backlog(m_session); }
+
+void SessionWidget::setFilePanel(QWidget *panel, std::function<bool()> busy)
+{
+    m_filePanel = panel;
+    m_panelBusy = std::move(busy);
+    panel->setParent(this);
+    panel->hide();
+    qobject_cast<QVBoxLayout *>(layout())->addWidget(panel, 1);
+}
+
+void SessionWidget::showFilePanel(bool show)
+{
+    if (!m_filePanel)
+        return;
+    m_view->setVisible(!show);
+    m_scroll->setVisible(!show);
+    m_filePanel->setVisible(show);
+    // Hidden widgets still leave their row its share of the height.
+    qobject_cast<QVBoxLayout *>(layout())->setStretchFactor(m_termRow, show ? 0 : 1);
+}
+
 void SessionWidget::onState(sshlx_state st)
 {
+    if (st == SSHLX_STATE_CONNECTING)
+        m_loggedIn = false;
+    else if (st == SSHLX_STATE_CONNECTED)
+        m_loggedIn = true;
     if (st == SSHLX_STATE_DISCONNECTED) {
         m_prompts->clearAll();
         m_push->connectionLost();
@@ -488,7 +535,7 @@ void SessionWidget::updateReconnectBar()
 {
     bool disc = m_session &&
         sshlx_session_state(m_session) == SSHLX_STATE_DISCONNECTED;
-    if (!disc) {
+    if (!disc || !m_reconnectBarEnabled) {
         m_reconnectBar->setVisible(false);
         return;
     }
@@ -1061,6 +1108,10 @@ void SessionWidget::buildContextMenu(QMenu *menu, const QString &link)
     buildPasswordMenu(passwords);
     passwords->setEnabled(state() == SSHLX_STATE_CONNECTED
                           && (!m_push->running() || m_pushBar->waitingForAnswer()));
+
+    menu->addAction(Icons::get("export"), tr("File &Transfer"), this,
+                    &SessionWidget::fileTransferRequested)
+        ->setEnabled(protocol() == protocolId("ssh"));
 
     QMenu *macros = menu->addMenu(tr("E&xecute Macro"));
     for (const Macro &m : loadMacros()) {
