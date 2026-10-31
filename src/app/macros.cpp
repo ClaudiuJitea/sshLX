@@ -15,6 +15,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QSettings>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -30,7 +31,8 @@ QList<Macro> loadMacros()
     for (int i = 0; i < n; i++) {
         st.setArrayIndex(i);
         macros.append({st.value("name").toString(), st.value("text").toString(),
-                       st.value("folder").toString(), st.value("script").toString()});
+                       st.value("folder").toString(), st.value("script").toString(),
+                       st.value("bar").toString()});
     }
     st.endArray();
     return macros;
@@ -47,6 +49,7 @@ void saveMacros(const QList<Macro> &macros)
         st.setValue("text", macros[i].text);
         st.setValue("folder", macros[i].folder);
         st.setValue("script", macros[i].script);
+        st.setValue("bar", macros[i].bar);
     }
     st.endArray();
     st.sync();
@@ -86,14 +89,61 @@ ButtonBar::ButtonBar(QWidget *parent) : QToolBar(tr("Button Bar"), parent)
     setFloatable(false);
     setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
     setToolButtonStyle(Qt::ToolButtonTextOnly);
+    m_chosen = QSettings().value("macros/currentBar").toString();
     connect(MacroEvents::instance(), &MacroEvents::changed, this, &ButtonBar::rebuild);
+    rebuild();
+}
+
+QStringList ButtonBar::barNames()
+{
+    QStringList names;
+    for (const Macro &m : loadMacros())
+        if (!m.bar.isEmpty() && !names.contains(m.bar))
+            names.append(m.bar);
+    names.sort(Qt::CaseInsensitive);
+    names.prepend(QString());
+    return names;
+}
+
+void ButtonBar::setChosenBar(const QString &name)
+{
+    m_chosen = name;
+    m_forced = QString();     // null again: a pick overrides the tab's bar
+    QSettings().setValue("macros/currentBar", name);
+    rebuild();
+}
+
+void ButtonBar::setForcedBar(const QString &name)
+{
+    if (name.isNull() == m_forced.isNull() && name == m_forced)
+        return;
+    m_forced = name;
     rebuild();
 }
 
 void ButtonBar::rebuild()
 {
     clear();
-    const QList<Macro> macros = loadMacros();
+    const QString bar = barNames().contains(shownBar()) ? shownBar() : QString();
+    QList<Macro> macros;
+    for (const Macro &m : loadMacros())
+        if (m.bar == bar)
+            macros.append(m);
+    const QStringList names = barNames();
+    if (names.size() > 1) {
+        auto *choice = new QComboBox;
+        choice->setObjectName("barChoice");
+        for (const QString &n : names)
+            choice->addItem(n.isEmpty() ? tr("Default bar") : n, n);
+        choice->setCurrentIndex(qMax(0, choice->findData(bar)));
+        // Queued: picking rebuilds the bar, and with it this combo box.
+        connect(choice, &QComboBox::activated, this, [this, choice] {
+            const QString name = choice->currentData().toString();
+            QTimer::singleShot(0, this, [this, name] { setChosenBar(name); });
+        });
+        addWidget(choice);
+        addSeparator();
+    }
     auto run = [this](const Macro &m) { emit macroTriggered(m, false); };
     QStringList seen;
     for (const Macro &m : macros) {
@@ -155,7 +205,9 @@ MacroDialog::MacroDialog(QWidget *parent) : QDialog(parent), m_macros(loadMacros
         m_list->addItem(m.name);
     m_name = new QLineEdit;
     m_name->setPlaceholderText(tr("Name"));
+    m_name->setAccessibleName(tr("Macro name"));
     m_text = new QPlainTextEdit;
+    m_text->setAccessibleName(tr("Commands"));
     m_text->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     m_text->setLineWrapMode(QPlainTextEdit::NoWrap);
     m_folder = new QComboBox;
@@ -168,6 +220,10 @@ MacroDialog::MacroDialog(QWidget *parent) : QDialog(parent), m_macros(loadMacros
     folders.sort();
     m_folder->addItem(QString());
     m_folder->addItems(folders);
+    m_bar = new QComboBox;
+    m_bar->setEditable(true);
+    m_bar->lineEdit()->setPlaceholderText(tr("Button bar (empty: the default bar)"));
+    m_bar->addItems(ButtonBar::barNames());
     m_kind = new QComboBox;
     m_kind->addItem(tr("Commands"));
     m_kind->addItem(tr("Python script"));
@@ -180,6 +236,7 @@ MacroDialog::MacroDialog(QWidget *parent) : QDialog(parent), m_macros(loadMacros
     auto *right = new QVBoxLayout;
     right->addWidget(m_name);
     right->addWidget(m_folder);
+    right->addWidget(m_bar);
     right->addWidget(m_kind);
     right->addLayout(scriptRow);
     right->addWidget(m_text, 1);
@@ -213,7 +270,8 @@ MacroDialog::MacroDialog(QWidget *parent) : QDialog(parent), m_macros(loadMacros
     });
     connect(add, &QPushButton::clicked, this, [this] {
         store();
-        m_macros.append({tr("New Macro"), QString(), m_folder->currentText().trimmed(), QString()});
+        m_macros.append({tr("New Macro"), QString(), m_folder->currentText().trimmed(), QString(),
+                          m_bar->currentText().trimmed()});
         m_list->addItem(m_macros.last().name);
         m_list->setCurrentRow(m_macros.size() - 1);
         m_name->setFocus();
@@ -249,7 +307,8 @@ void MacroDialog::store()
     if (m_row >= 0 && m_row < m_macros.size())
         m_macros[m_row] = {m_name->text(), m_text->toPlainText(),
                            m_folder->currentText().trimmed().remove(QRegularExpression("^/+|/+$")),
-                           m_kind->currentIndex() == 1 ? m_script->text().trimmed() : QString()};
+                           m_kind->currentIndex() == 1 ? m_script->text().trimmed() : QString(),
+                           m_bar->currentText().trimmed()};
 }
 
 void MacroDialog::select(int row)
@@ -264,6 +323,8 @@ void MacroDialog::select(int row)
     m_folder->setEnabled(have);
     m_kind->setEnabled(have);
     m_folder->setCurrentText(have ? m_macros[row].folder : QString());
+    m_bar->setEnabled(have);
+    m_bar->setCurrentText(have ? m_macros[row].bar : QString());
     m_script->setText(have ? m_macros[row].script : QString());
     m_kind->setCurrentIndex(have && !m_macros[row].script.isEmpty() ? 1 : 0);
     updateKind();

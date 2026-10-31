@@ -1,5 +1,6 @@
 #include "commandwindow.h"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QFontDatabase>
 #include <QHBoxLayout>
@@ -34,11 +35,15 @@ CommandWindow::CommandWindow(DocumentArea *docs, QWidget *parent) : QWidget(pare
     m_choose->setMenu(new QMenu(m_choose));
     connect(m_choose->menu(), &QMenu::aboutToShow, this, &CommandWindow::buildChooser);
     m_summary = new QLabel;
+    m_live = new QCheckBox(tr("Type live"));
+    m_live->setObjectName("liveTyping");
+    m_live->setToolTip(tr("Each key typed in a terminal also goes to the other tabs listed here."));
     m_send = DialogKit::primaryButton(tr("Send"));
     m_send->setIcon(Icons::get("send"));
     row->addWidget(new QLabel(tr("Send to")));
     row->addWidget(m_target);
     row->addWidget(m_choose);
+    row->addWidget(m_live);
     row->addWidget(m_summary, 1);
     row->addWidget(m_send);
     v->addLayout(row);
@@ -50,9 +55,18 @@ CommandWindow::CommandWindow(DocumentArea *docs, QWidget *parent) : QWidget(pare
     m_input->installEventFilter(this);
     v->addWidget(m_input);
 
+    m_target->setAccessibleName(tr("Send to"));
+    m_input->setAccessibleName(tr("Command to send"));
+    m_live->setAccessibleDescription(m_live->toolTip());
     connect(m_send, &QPushButton::clicked, this, &CommandWindow::sendInput);
-    connect(m_target, &QComboBox::currentIndexChanged, this, [this] {
-        updateSummary();
+    connect(m_target, &QComboBox::currentIndexChanged, this, &CommandWindow::updateSummary);
+    connect(m_live, &QCheckBox::toggled, this, &CommandWindow::updateSummary);
+    SessionWidget::setMirror([this](SessionWidget *source) {
+        QList<SessionWidget *> list;
+        if (m_live->isChecked())
+            list = targets();
+        list.removeAll(source);
+        return list;
     });
     connect(docs, &DocumentArea::sessionCountChanged, this, &CommandWindow::updateSummary);
     connect(docs, &DocumentArea::currentSessionChanged, this, &CommandWindow::updateSummary);
@@ -63,6 +77,42 @@ CommandWindow::CommandWindow(DocumentArea *docs, QWidget *parent) : QWidget(pare
 void CommandWindow::setTarget(Target t)
 {
     m_target->setCurrentIndex(m_target->findData(t));
+}
+
+void CommandWindow::setTargetGroup(const QString &name)
+{
+    refreshGroups();
+    m_target->setCurrentIndex(m_target->findData(name));
+}
+
+void CommandWindow::refreshGroups()
+{
+    const QVariant was = m_target->currentData();
+    QSignalBlocker block(m_target);
+    while (m_target->count() > 4)
+        m_target->removeItem(4);
+    for (const QString &n : m_docs->groupNames())
+        m_target->addItem(tr("Group: %1").arg(n), n);
+    const int i = m_target->findData(was);
+    m_target->setCurrentIndex(i >= 0 ? i : 0);
+    updateSummary();
+}
+
+void CommandWindow::setLive(bool on)
+{
+    m_live->setChecked(on);
+}
+
+bool CommandWindow::live() const
+{
+    return m_live->isChecked();
+}
+
+void CommandWindow::hideEvent(QHideEvent *e)
+{
+    // Nobody should be typing into other tabs without seeing that they are.
+    m_live->setChecked(false);
+    QWidget::hideEvent(e);
 }
 
 void CommandWindow::setChosen(const QList<SessionWidget *> &tabs)
@@ -99,7 +149,12 @@ void CommandWindow::buildChooser()
 QList<SessionWidget *> CommandWindow::targets() const
 {
     QList<SessionWidget *> r;
-    switch (m_target->currentData().toInt()) {
+    const QVariant target = m_target->currentData();
+    if (target.typeId() == QMetaType::QString) {
+        for (SessionWidget *s : m_docs->sessions())
+            if (s->group() == target.toString())
+                r.append(s);
+    } else switch (target.toInt()) {
     case Current:
         if (SessionWidget *s = m_docs->currentSession())
             r.append(s);
@@ -125,11 +180,14 @@ QList<SessionWidget *> CommandWindow::targets() const
 void CommandWindow::updateSummary()
 {
     const int n = int(targets().size());
-    const bool wide = m_target->currentData().toInt() != Current;
-    m_choose->setVisible(m_target->currentData().toInt() == Chosen);
-    m_summary->setText(wide ? tr("%n tab(s)", nullptr, n) : QString());
+    const QVariant target = m_target->currentData();
+    const bool wide = target.typeId() == QMetaType::QString || target.toInt() != Current;
+    m_choose->setVisible(target.typeId() == QMetaType::Int && target.toInt() == Chosen);
+    m_summary->setText(!wide ? QString()
+                       : m_live->isChecked() ? tr("Typing goes to %n tab(s)", nullptr, n)
+                                             : tr("%n tab(s)", nullptr, n));
     QFont f = m_summary->font();
-    f.setBold(wide && n > 1);
+    f.setBold((wide && n > 1) || m_live->isChecked());
     m_summary->setFont(f);
 }
 

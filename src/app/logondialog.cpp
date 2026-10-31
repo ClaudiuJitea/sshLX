@@ -2,11 +2,13 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFileDialog>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QTableWidget>
 #include <QVBoxLayout>
 
@@ -43,6 +45,32 @@ LogonDialog::LogonDialog(const QList<LogonStep> &steps, const QList<Credential> 
                          "Enter, which wakes a serial console. Each step looks only at output "
                          "after the last match. Passwords come from the keyring, and go only to "
                          "a line that looks like a password prompt.")));
+
+    m_script = new QLineEdit;
+    m_script->setObjectName("logonScript");
+    m_script->setPlaceholderText(tr("Optional: a Python script to run once these steps are done"));
+    auto *browse = secondaryButton(tr("Browse..."));
+    auto *scriptRow = new QHBoxLayout;
+    scriptRow->addWidget(m_script, 1);
+    scriptRow->addWidget(browse);
+    v->addLayout(scriptRow);
+    connect(browse, &QPushButton::clicked, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(this, tr("Python Script"), m_script->text(),
+                                                          tr("Python scripts (*.py);;All files (*)"));
+        if (!path.isEmpty())
+            m_script->setText(path);
+    });
+
+    m_idleText = new QLineEdit;
+    m_idleText->setPlaceholderText(tr("Anti-idle: text to send, such as \\r for Enter"));
+    m_idleSeconds = new QSpinBox;
+    m_idleSeconds->setRange(0, 86400);
+    m_idleSeconds->setSuffix(tr(" s idle"));
+    m_idleSeconds->setSpecialValueText(tr("Off"));
+    auto *idleRow = new QHBoxLayout;
+    idleRow->addWidget(m_idleText, 1);
+    idleRow->addWidget(m_idleSeconds);
+    v->addLayout(idleRow);
 
     auto *buttons = new QWidget;
     auto *bh = new QHBoxLayout(buttons);
@@ -106,6 +134,26 @@ void LogonDialog::addStep(const LogonStep &step)
     });
     send->setEnabled(reply->currentIndex() == 0);
     m_table->setCurrentCell(row, ColWait);
+}
+
+QString LogonDialog::antiIdleText() const { return m_idleText->text(); }
+
+int LogonDialog::antiIdleSeconds() const { return m_idleSeconds->value(); }
+
+void LogonDialog::setAntiIdle(const QString &text, int seconds)
+{
+    m_idleText->setText(text);
+    m_idleSeconds->setValue(seconds);
+}
+
+QString LogonDialog::script() const
+{
+    return m_script->text().trimmed();
+}
+
+void LogonDialog::setScript(const QString &path)
+{
+    m_script->setText(path);
 }
 
 QList<LogonStep> LogonDialog::steps() const

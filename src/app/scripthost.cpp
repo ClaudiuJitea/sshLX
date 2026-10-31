@@ -53,6 +53,7 @@ struct ScriptHost::Run {
     QList<Wait *> waits;
     QByteArray buffer;
     QList<QMetaObject::Connection> tabConnections;
+    QPointer<SessionWidget> launchTab;
 };
 
 ScriptHost::ScriptHost(MainWindow *window) : QObject(window), m_window(window) {}
@@ -114,7 +115,7 @@ void ScriptHost::ensureConsole()
     }
 }
 
-bool ScriptHost::run(const QString &path, const QStringList &args)
+bool ScriptHost::run(const QString &path, const QStringList &args, SessionWidget *tab)
 {
     if (!QFileInfo(path).isFile()) {
         error(m_window, tr("Run Script"), tr("%1 does not exist.").arg(path));
@@ -168,6 +169,9 @@ bool ScriptHost::run(const QString &path, const QStringList &args)
 
     Run *run = r.release();
     m_runs.append(run);
+    run->launchTab = tab;
+    if (tab)
+        capture(run, tab);    // from now, so a prompt can't arrive unseen
     connect(run->server, &QLocalServer::newConnection, this, [this, run] {
         while (QLocalSocket *c = run->server->nextPendingConnection()) {
             if (run->socket) {
@@ -322,6 +326,10 @@ void ScriptHost::capture(Run *r, SessionWidget *s)
     if (r->output.contains(s))
         return;
     r->output.insert(s, std::make_shared<OutputText>());
+    // The prompt showing now counts: a script must not wait for one that
+    // arrived before it started.
+    const QByteArray line = s->cursorLine().toUtf8();
+    r->output[s]->append(line.constData(), size_t(line.size()));
     r->tabConnections << connect(s, &SessionWidget::outputReceived, this, [this, r, s](const QByteArray &data) {
         if (!m_runs.contains(r))
             return;
@@ -387,7 +395,7 @@ void ScriptHost::dispatch(Run *r, const QString &method, const QJsonObject &p, c
         }
         reply(list, {});
     } else if (method == "current") {
-        SessionWidget *s = m_window->documents()->currentSession();
+        SessionWidget *s = r->launchTab ? r->launchTab.data() : m_window->documents()->currentSession();
         if (s)
             capture(r, s);
         reply(s ? QJsonValue(info(s)) : QJsonValue(), {});
@@ -434,6 +442,8 @@ void ScriptHost::dispatch(Run *r, const QString &method, const QJsonObject &p, c
                 reply({}, tr("This tab can't take text now: it is not connected, or is busy."));
                 return;
             }
+            // What is waited for next is the answer to this, not older output.
+            r->output[s]->clear();
             s->typeText(p["text"].toString());
             reply(true, {});
         } else if (method == "send_password") {
@@ -452,6 +462,7 @@ void ScriptHost::dispatch(Run *r, const QString &method, const QJsonObject &p, c
                 reply({}, tr("The last line is not a password prompt, so nothing was sent."));
                 return;
             }
+            r->output[s]->clear();
             s->sendPasswordQuietly(id, [reply](bool ok, const QString &e) {
                 reply(ok, ok ? QString() : e);
             });

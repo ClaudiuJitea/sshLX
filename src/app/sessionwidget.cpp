@@ -4,7 +4,9 @@
 #include <QApplication>
 #include <QActionGroup>
 #include <QClipboard>
+#include <QDateTime>
 #include <QFile>
+#include <QFileInfo>
 #include <QFileDialog>
 #include <QFontDatabase>
 #include <QInputDialog>
@@ -22,6 +24,7 @@
 #include <QMenu>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScrollBar>
 #include <QSettings>
 #include <QStandardPaths>
@@ -42,10 +45,15 @@
 #include "highlightruledialog.h"
 #include "highlightrules.h"
 #include "keyring.h"
+#include "asciisender.h"
+#include "hexview.h"
+#include "keybindings.h"
 #include "logonrunner.h"
+#include "logrotate.h"
 #include "macros.h"
 #include "modemtransfer.h"
 #include "promptbar.h"
+#include "scriptrecorder.h"
 #include "settingsdialog.h"
 #include "terminallook.h"
 #include "terminalview.h"
@@ -162,6 +170,7 @@ struct SessionTrampolines {
     static void refresh(void *ctx) { W(ctx)->m_view->update(); }
     static void output_data(void *ctx, const char *data, size_t len)
     {
+        W(ctx)->m_received += qint64(len);
         if (W(ctx)->m_raw) {
             W(ctx)->m_raw(data, len);
             return;
@@ -172,6 +181,8 @@ struct SessionTrampolines {
             w->m_push->feed(data, len);
         if (w->m_logon->running())
             w->m_logon->feed(data, len);
+        if (w->m_recorder)
+            w->m_recorder->output(data, len);
         if (w->receivers(SIGNAL(outputReceived(QByteArray))) > 0)
             emit w->outputReceived(QByteArray(data, qsizetype(len)));
         // "sz" or "rz" just started on the remote side. Search across the
@@ -204,6 +215,11 @@ struct SessionTrampolines {
         SessionWidget *w = W(ctx);
         if (w->m_eventLog)
             w->m_eventLog->appendLine(QString::fromUtf8(line));
+        // PuTTY says what it agreed on only here.
+        static const QRegularExpression cipher("Initialised (.+) (outbound|inbound) encryption");
+        const QRegularExpressionMatch m = cipher.match(QString::fromUtf8(line));
+        if (m.hasMatch())
+            (m.captured(2) == "outbound" ? w->m_cipherOut : w->m_cipherIn) = m.captured(1);
     }
     static void logging_error(void *, const char *) {}
     static void specials_changed(void *) {}
@@ -234,6 +250,17 @@ static QList<SessionWidget *> &allSessions()
 {
     static QList<SessionWidget *> list;
     return list;
+}
+
+static SessionWidget::Mirror &mirror()
+{
+    static SessionWidget::Mirror m;
+    return m;
+}
+
+void SessionWidget::setMirror(Mirror f)
+{
+    mirror() = std::move(f);
 }
 
 static HighlightSet &highlights()
@@ -317,10 +344,14 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
     m_modem = new ModemTransfer(this);
     m_logon = new LogonRunner(this);
     m_modem->setBacklog([this] { return sendBacklog(); });
+    m_ascii = new AsciiSender(this);
+    m_idleTimer = new QTimer(this);
+    m_idleTimer->setSingleShot(true);
 
     m_termRow = new QHBoxLayout;
     m_termRow->setSpacing(0);
     m_view = new TerminalView;
+    m_view->setAccessibleName(tr("Terminal"));
     m_scroll = new QScrollBar(Qt::Vertical);
     m_termRow->addWidget(m_view, 1);
     m_termRow->addWidget(m_scroll);
@@ -354,10 +385,37 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
     connect(m_push, &ConfigPush::sendKeys, this, [this](const QString &keys) {
         sshlx_session_text(m_session, keys.toUtf8().constData());
     });
+    connect(m_view, &TerminalView::filesDropped, this, &SessionWidget::handleDroppedFiles);
+    connect(m_ascii, &AsciiSender::send, this, &SessionWidget::sendRaw);
+    connect(m_ascii, &AsciiSender::progress, this, [this](int line, int total) {
+        m_taskLabel->setText(tr("Sending text: line %1 of %2").arg(line).arg(total));
+        m_taskProgress->setRange(0, total);
+        m_taskProgress->setValue(line);
+    });
+    connect(m_ascii, &AsciiSender::finished, this, [this](bool complete) {
+        m_view->setInputBlocked(false);
+        closeTask(complete ? tr("Text file sent.") : tr("Sending stopped."));
+        m_view->setFocus();
+    });
+    connect(m_idleTimer, &QTimer::timeout, this, [this] {
+        if (canSendCommands() && !m_antiIdle.text.isEmpty())
+            sshlx_session_text(m_session, KeyBindings::decodeText(m_antiIdle.text).toUtf8().constData());
+        noteInput();
+    });
+    connect(m_view, &TerminalView::keySent, this, &SessionWidget::noteInput);
+    connect(m_view, &TerminalView::keySent, this, &SessionWidget::mirrorKey);
+    connect(m_view, &TerminalView::textSent, this, &SessionWidget::mirrorText);
+    connect(m_view, &TerminalView::keyBound, this, &SessionWidget::runKeyBinding);
+    m_logTimer = new QTimer(this);
+    m_logTimer->setInterval(5000);
+    connect(m_logTimer, &QTimer::timeout, this, &SessionWidget::checkLogRotation);
+    m_logTimer->start();
     connect(m_taskClose, &QPushButton::clicked, m_taskBar, &QWidget::hide);
     connect(m_taskStop, &QPushButton::clicked, this, [this] {
         if (m_modem->running())
             m_modem->cancel();
+        else if (m_ascii->running())
+            m_ascii->stop();
         else
             m_logon->abort(tr("Stopped."));
     });
@@ -393,10 +451,12 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
         m_taskProgress->setValue(step - 1);
     });
     connect(m_logon, &LogonRunner::finished, this, [this](bool ok, const QString &message) {
-        if (ok)
+        if (ok) {
             m_taskBar->hide();
-        else
+            afterLogon();
+        } else {
             closeTask(tr("Logon actions stopped: %1").arg(message));
+        }
     });
     connect(m_pushBar, &ConfigPushBar::inputBlockChanged, m_view, &TerminalView::setInputBlocked);
     connect(m_pushBar, &ConfigPushBar::passwordMenuRequested, this, &SessionWidget::buildPasswordMenu);
@@ -450,6 +510,7 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
 SessionWidget::~SessionWidget()
 {
     allSessions().removeAll(this);
+    delete m_recorder;
     if (m_eventLog)
         m_eventLog->deleteLater();
     if (m_session) {
@@ -597,10 +658,22 @@ void SessionWidget::onState(sshlx_state st)
         m_prompts->clearAll();
         m_push->connectionLost();
         m_modem->connectionLost();
+        m_ascii->stop();
+        m_idleTimer->stop();
+        m_connectedAt = QDateTime();
         if (m_logon->running())
             m_logon->abort(tr("The connection was lost."));
-    } else if (st == SSHLX_STATE_CONNECTED && m_logonSteps && !m_filePanel) {
-        m_logon->start(m_logonSteps());
+    } else if (st == SSHLX_STATE_CONNECTED && !m_filePanel) {
+        const QList<LogonStep> steps = m_logonSteps ? m_logonSteps() : QList<LogonStep>();
+        m_logOpened = QDateTime::currentDateTime();
+        m_logPath = expandedLogPath(m_logOpened);
+        m_connectedAt = m_logOpened;
+        m_antiIdle = m_antiIdleSource ? m_antiIdleSource() : AntiIdle();
+        noteInput();
+        if (!steps.isEmpty())
+            m_logon->start(steps);
+        else
+            QTimer::singleShot(0, this, &SessionWidget::afterLogon);   // not inside the engine
     }
     updateReconnectBar();
     emit stateChanged(st);
@@ -712,7 +785,7 @@ void SessionWidget::requestPaste(int clip)
 // program has bracketed paste on. A stray right click must not do that.
 void SessionWidget::deliverPaste(const QString &text)
 {
-    if (m_push->running())
+    if (m_push->running() || m_locked)
         return;
     int lines = 0;
     for (const QString &l : text.split('\n'))
@@ -735,11 +808,13 @@ void SessionWidget::deliverPaste(const QString &text)
         }
     }
     sshlx_session_paste(m_session, text.toUtf8().constData());
+    if (m_recorder)
+        m_recorder->typed(text);
 }
 
 void SessionWidget::pasteConfiguration(const QString &text)
 {
-    if (m_push->running())
+    if (m_push->running() || m_locked)
         return;
     if (state() != SSHLX_STATE_CONNECTED) {
         DialogKit::warning(window(), tr("Paste Configuration"), tr("This session is not connected."));
@@ -864,11 +939,34 @@ void SessionWidget::reloadMousePrefs()
         s->applyMousePrefs();
 }
 
+static QString &adHocWord()
+{
+    static QString word;
+    return word;
+}
+
+void SessionWidget::setAdHocHighlight(const QString &text)
+{
+    adHocWord() = text;
+    reloadHighlights();
+}
+
 void SessionWidget::reloadHighlights()
 {
-    highlights().setRules(HighlightSet::load());
+    QList<HighlightRule> rules;
+    if (HighlightSet::enabled())
+        rules = HighlightSet::load();
+    if (!adHocWord().isEmpty()) {
+        HighlightRule r;
+        r.pattern = adHocWord();
+        r.wholeWord = false;
+        r.fg = QStringLiteral("#000000");
+        r.bg = QStringLiteral("#ffd54f");
+        rules.prepend(r);      // first, so it wins over any keyword
+    }
+    highlights().setRules(rules);
     for (SessionWidget *s : allSessions())
-        s->m_view->setHighlights(HighlightSet::enabled() ? &highlights() : nullptr);
+        s->m_view->setHighlights(rules.isEmpty() ? nullptr : &highlights());
 }
 
 void SessionWidget::addKeyword()
@@ -927,13 +1025,12 @@ void SessionWidget::buildAppearanceMenu(QMenu *menu)
     QMenu *schemes = menu->addMenu(Icons::get("palette"), tr("&Colour Scheme"));
     auto *group = new QActionGroup(schemes);
     const int current = TerminalLook::currentScheme(conf());
-    for (int i = 0; i < TerminalLook::schemes().size(); i++) {
-        const TerminalLook::Scheme &s = TerminalLook::schemes()[i];
-        QAction *a = schemes->addAction(TerminalLook::swatch(s), s.name, this, [self, i] {
+    const QList<TerminalLook::Scheme> list = TerminalLook::schemes();
+    for (int i = 0; i < list.size(); i++) {
+        const TerminalLook::Scheme &s = list[i];
+        QAction *a = schemes->addAction(TerminalLook::swatch(s), s.name, this, [self, s] {
             if (self)
-                self->changeConf([i](sshlx_conf *c) {
-                    TerminalLook::applyScheme(c, TerminalLook::schemes()[i]);
-                });
+                self->changeConf([s](sshlx_conf *c) { TerminalLook::applyScheme(c, s); });
         });
         a->setCheckable(true);
         a->setChecked(i == current);
@@ -951,6 +1048,54 @@ void SessionWidget::buildAppearanceMenu(QMenu *menu)
         custom->setCheckable(true);
         custom->setChecked(true);
         custom->setEnabled(false);
+    }
+    schemes->addSeparator();
+    schemes->addAction(tr("&Save Colours as Scheme..."), this, [self] {
+        if (!self)
+            return;
+        bool ok = false;
+        const QString name = QInputDialog::getText(self->window(), tr("Save Colour Scheme"),
+                                                   tr("Scheme name:"), QLineEdit::Normal,
+                                                   QString(), &ok).trimmed();
+        if (!ok || name.isEmpty() || !self)
+            return;
+        if (!TerminalLook::saveUserScheme(TerminalLook::schemeFromConf(self->conf(), name)))
+            DialogKit::warning(self->window(), tr("Save Colour Scheme"),
+                               tr("\"%1\" is a built-in scheme. Choose another name.").arg(name));
+    });
+    schemes->addAction(tr("&Import Scheme..."), this, [self] {
+        if (!self)
+            return;
+        const QString path = QFileDialog::getOpenFileName(self->window(), tr("Import Colour Scheme"), {},
+                                                          tr("sshLX colour schemes (*.json)"));
+        if (path.isEmpty() || !self)
+            return;
+        TerminalLook::Scheme s;
+        QString error;
+        if (!TerminalLook::importScheme(path, &s, &error) || !TerminalLook::saveUserScheme(s))
+            DialogKit::error(self->window(), tr("Import Colour Scheme"),
+                             error.isEmpty() ? tr("A built-in scheme has that name.") : error);
+        else
+            self->changeConf([s](sshlx_conf *c) { TerminalLook::applyScheme(c, s); });
+    });
+    schemes->addAction(tr("E&xport Colours..."), this, [self] {
+        if (!self)
+            return;
+        const QString path = QFileDialog::getSaveFileName(self->window(), tr("Export Colour Scheme"),
+                                                          QStringLiteral("scheme.json"),
+                                                          tr("sshLX colour schemes (*.json)"));
+        if (path.isEmpty() || !self)
+            return;
+        QString error;
+        const TerminalLook::Scheme s = TerminalLook::schemeFromConf(self->conf(), QFileInfo(path).completeBaseName());
+        if (!TerminalLook::exportScheme(s, path, &error))
+            DialogKit::error(self->window(), tr("Export Colour Scheme"), error);
+    });
+    const QList<TerminalLook::Scheme> mine = TerminalLook::userSchemes();
+    if (!mine.isEmpty()) {
+        QMenu *del = schemes->addMenu(tr("&Delete Scheme"));
+        for (const TerminalLook::Scheme &s : mine)
+            del->addAction(s.name, this, [n = s.name] { TerminalLook::removeUserScheme(n); });
     }
 
     const QFont font = FontSpec::fromPutty(
@@ -1075,39 +1220,297 @@ void SessionWidget::setCustomTitle(const QString &text)
 
 void SessionWidget::runMacro(const QString &text)
 {
-    if (m_push->running())
+    if (m_push->running() || m_locked)
         return;
     QStringList lines = text.split('\n');
     while (!lines.isEmpty() && lines.last().trimmed().isEmpty())
         lines.removeLast();
     if (lines.size() > 1)
         pasteConfiguration(lines.join('\n'));
-    else if (!lines.isEmpty())
+    else if (!lines.isEmpty()) {
         sshlx_session_text(m_session, (lines.first() + '\r').toUtf8().constData());
+        if (m_recorder)
+            m_recorder->typed(lines.first() + '\r');
+    }
 }
 
 bool SessionWidget::canSendCommands() const
 {
     return state() == SSHLX_STATE_CONNECTED && !m_filePanel && !m_push->running()
-        && !m_modem->running();
+        && !m_modem->running() && !m_ascii->running() && !m_locked;
 }
 
 void SessionWidget::sendCommand(const QString &line)
 {
-    if (canSendCommands())
-        sshlx_session_text(m_session, (line + '\r').toUtf8().constData());
+    if (!canSendCommands())
+        return;
+    sshlx_session_text(m_session, (line + '\r').toUtf8().constData());
+    if (m_recorder)
+        m_recorder->typed(line + '\r');
 }
 
 void SessionWidget::sendCommands(const QStringList &lines)
 {
-    if (canSendCommands())
-        m_push->start(lines, ConfigPush::Options());
+    if (!canSendCommands())
+        return;
+    m_push->start(lines, ConfigPush::Options());
+    if (m_recorder) {
+        m_recorder->note(tr("%n line(s) sent one at a time:", nullptr, int(lines.size())));
+        for (const QString &l : lines)
+            m_recorder->typed(l + '\r');
+    }
 }
 
 void SessionWidget::typeText(const QString &text)
 {
     if (canSendCommands())
         sshlx_session_text(m_session, text.toUtf8().constData());
+}
+
+void SessionWidget::setLocked(bool on)
+{
+    if (on == m_locked || (on && m_filePanel))
+        return;
+    m_locked = on;
+    m_view->setLocked(on);
+    if (on)
+        m_logon->stop();
+    emit lockChanged(on);
+}
+
+void SessionWidget::noteInput()
+{
+    if (m_antiIdle.seconds > 0 && !m_antiIdle.text.isEmpty()
+        && state() == SSHLX_STATE_CONNECTED)
+        m_idleTimer->start(m_antiIdle.seconds * 1000);
+}
+
+SessionWidget::Status SessionWidget::status() const
+{
+    Status st;
+    for (size_t i = 0; i < sshlx_protocol_count(); i++)
+        if (sshlx_protocol_get(i)->id == protocol())
+            st.protocol = QString::fromUtf8(sshlx_protocol_get(i)->display_name);
+    st.cipherOut = m_cipherOut;
+    st.cipherIn = m_cipherIn;
+    st.received = m_received;
+    if (m_connectedAt.isValid() && state() == SSHLX_STATE_CONNECTED)
+        st.connectedSecs = m_connectedAt.secsTo(QDateTime::currentDateTime());
+    sshlx_session_get_size(m_session, &st.cols, &st.rows);
+    return st;
+}
+
+void SessionWidget::showHexView()
+{
+    if (!m_hexView) {
+        m_hexView = new HexViewDialog(tr("%1: Received Data").arg(m_title), window());
+        m_hexView->setAttribute(Qt::WA_DeleteOnClose);
+        connect(this, &SessionWidget::outputReceived, m_hexView.data(), &HexViewDialog::addData);
+    }
+    m_hexView->show();
+    m_hexView->raise();
+}
+
+QDialog *SessionWidget::hexViewForTests() const { return m_hexView; }
+
+bool SessionWidget::sendingAscii() const { return m_ascii->running(); }
+
+void SessionWidget::sendAsciiFile(const QString &path, int lineDelayMs, int charDelayMs)
+{
+    if (!canSendCommands())
+        return;
+    QString error;
+    if (!m_ascii->start(path, {lineDelayMs, charDelayMs}, &error)) {
+        DialogKit::error(window(), tr("Send ASCII"), error);
+        return;
+    }
+    showTask(tr("Sending text..."), true);
+    m_view->setInputBlocked(true);
+}
+
+void SessionWidget::askAsciiFile()
+{
+    const QString path = QFileDialog::getOpenFileName(window(), tr("Send ASCII File"));
+    if (path.isEmpty())
+        return;
+    QSettings st;
+    QPointer<SessionWidget> self(this);
+    bool ok = false;
+    const int line = QInputDialog::getInt(window(), tr("Send ASCII File"),
+                                          tr("Pause after each line (ms):"),
+                                          st.value("transfers/asciiLineMs", 100).toInt(), 0, 60000, 10, &ok);
+    if (!ok || !self)
+        return;
+    const int chr = QInputDialog::getInt(window(), tr("Send ASCII File"),
+                                         tr("Pause after each character (ms):"),
+                                         st.value("transfers/asciiCharMs", 0).toInt(), 0, 5000, 1, &ok);
+    if (!ok || !self)
+        return;
+    st.setValue("transfers/asciiLineMs", line);
+    st.setValue("transfers/asciiCharMs", chr);
+    sendAsciiFile(path, line, chr);
+}
+
+void SessionWidget::handleDroppedFiles(const QStringList &paths)
+{
+    if (paths.isEmpty() || !canSendCommands())
+        return;
+    using P = ModemTransfer::Protocol;
+    const bool ssh = protocol() == protocolId("ssh");
+    QStringList names;
+    for (const QString &p : paths)
+        names << QFileInfo(p).fileName();
+    QStringList buttons{tr("Cancel"), tr("Zmodem"), tr("Ymodem")};
+    if (ssh)
+        buttons << tr("SFTP");
+    QPointer<SessionWidget> self(this);
+    const int choice = DialogKit::message(window(), DialogKit::Kind::Question,
+                                          tr("Send %n file(s)?", nullptr, int(paths.size())),
+                                          tr("Send %1 to this session. Zmodem starts the receiver "
+                                             "itself. For Ymodem, start it on the other side first.")
+                                              .arg(names.join(", ")),
+                                          buttons, ssh ? 3 : 1);
+    if (!self)
+        return;
+    if (choice == 1) {
+        sendCommand("rz");
+        sendModem(int(P::Zmodem), paths);
+    } else if (choice == 2) {
+        sendModem(int(P::Ymodem), paths);
+    } else if (choice == 3) {
+        emit sftpUploadRequested(paths);
+    }
+}
+
+void SessionWidget::setGroup(const QString &name)
+{
+    m_group = name.trimmed();
+    emit identityChanged();
+}
+
+void SessionWidget::mirrorKey(const sshlx_key_event *ev, int qtKey)
+{
+    if (m_recorder) {
+        if (qtKey == Qt::Key_Return || qtKey == Qt::Key_Enter)
+            m_recorder->typed(QStringLiteral("\r"));
+        else if (qtKey == Qt::Key_Backspace)
+            m_recorder->typed(QString(QChar(0x7f)));
+        else if (ev->text && *ev->text)
+            m_recorder->typed(QString::fromUtf8(ev->text));
+        else if (qtKey >= Qt::Key_Left && qtKey <= Qt::Key_Down)
+            m_recorder->note(tr("An arrow key was pressed here, which is not recorded."));
+    }
+    if (!mirror())
+        return;
+    for (SessionWidget *t : mirror()(this))
+        if (t != this && t->canSendCommands())
+            sshlx_session_key(t->m_session, ev);
+}
+
+void SessionWidget::mirrorText(const QString &text)
+{
+    if (m_recorder)
+        m_recorder->typed(text);
+    if (!mirror())
+        return;
+    for (SessionWidget *t : mirror()(this))
+        if (t != this && t->canSendCommands())
+            t->typeText(text);
+}
+
+void SessionWidget::runKeyBinding(const KeyBinding &b)
+{
+    switch (b.kind) {
+    case KeyBinding::Text: {
+        const QString text = KeyBindings::decodeText(b.value);
+        typeText(text);
+        mirrorText(text);
+        break;
+    }
+    case KeyBinding::Macro:
+        emit macroRequested(b.value);
+        break;
+    case KeyBinding::Script:
+        emit scriptRequested(b.value);
+        break;
+    }
+}
+
+void SessionWidget::afterLogon()
+{
+    const QString path = m_logonScript ? m_logonScript() : QString();
+    if (!path.isEmpty() && state() == SSHLX_STATE_CONNECTED)
+        emit logonScriptRequested(path);
+}
+
+void SessionWidget::startRecording()
+{
+    if (!m_recorder && !m_filePanel)
+        m_recorder = new ScriptRecorder;
+}
+
+QString SessionWidget::stopRecording()
+{
+    if (!m_recorder)
+        return {};
+    const QString script = m_recorder->steps() ? m_recorder->script() : QString();
+    delete m_recorder;
+    m_recorder = nullptr;
+    return script;
+}
+
+bool SessionWidget::logEnabled() const
+{
+    return confInt(conf(), "LogType") != 0 && !confStr(conf(), "LogFileName").isEmpty();
+}
+
+QString SessionWidget::expandedLogPath(const QDateTime &when) const
+{
+    return LogRotate::expandName(confStr(conf(), "LogFileName"), confStr(conf(), "HostName"),
+                                 confInt(conf(), "PortNumber"), when);
+}
+
+void SessionWidget::setLogPaused(bool paused)
+{
+    if (paused == m_logPaused || !logEnabled())
+        return;
+    m_logPaused = paused;
+    sshlx_session_log_set_paused(m_session, paused);
+}
+
+static LogRotate::Policy rotationPolicy()
+{
+    QSettings st;
+    LogRotate::Policy p;
+    p.maxBytes = st.value("logging/rotateMB", 0).toLongLong() * 1024 * 1024;
+    p.maxHours = st.value("logging/rotateHours", 0).toInt();
+    p.keep = st.value("logging/keep", 5).toInt();
+    return p;
+}
+
+bool SessionWidget::rotateLog()
+{
+    if (!logEnabled() || state() != SSHLX_STATE_CONNECTED || !QFileInfo::exists(m_logPath))
+        return false;
+    const bool wasPaused = m_logPaused;
+    if (!wasPaused)
+        sshlx_session_log_set_paused(m_session, true);
+    const QString rotated = LogRotate::rotate(m_logPath, rotationPolicy(), QDateTime::currentDateTime());
+    m_logOpened = QDateTime::currentDateTime();
+    m_logPath = expandedLogPath(m_logOpened);
+    if (!wasPaused)
+        sshlx_session_log_set_paused(m_session, false);
+    return !rotated.isEmpty();
+}
+
+void SessionWidget::checkLogRotation()
+{
+    if (m_logPaused || !logEnabled() || state() != SSHLX_STATE_CONNECTED)
+        return;
+    const LogRotate::Policy p = rotationPolicy();
+    if (p.active() && LogRotate::due(p, QFileInfo(m_logPath).size(), m_logOpened,
+                                     QDateTime::currentDateTime()))
+        rotateLog();
 }
 
 bool SessionWidget::logonRunning() const { return m_logon->running(); }
@@ -1139,7 +1542,7 @@ void SessionWidget::beginModem()
     m_taskProgress->setRange(0, 0);
 }
 
-bool SessionWidget::sendModem(int protocol, const QStringList &files)
+bool SessionWidget::sendModem(int protocol, const QStringList &files, bool resume)
 {
     if (!canSendCommands() || files.isEmpty())
         return false;
@@ -1147,10 +1550,11 @@ bool SessionWidget::sendModem(int protocol, const QStringList &files)
     m_taskLabel->setProperty("protocol", ModemTransfer::protocolName(p));
     showTask(tr("%1: waiting for the other end...").arg(ModemTransfer::protocolName(p)), true);
     beginModem();
-    m_modem->startSend(p, files);
+    m_modem->startSend(p, files, resume);
     // The receiver was started first, so its "ready" went past while a file
     // was being picked, and it may not repeat that for ten seconds and more.
-    if (p != ModemTransfer::Protocol::Zmodem && !m_zTail.isEmpty()) {
+    if (p != ModemTransfer::Protocol::Zmodem && p != ModemTransfer::Protocol::Kermit
+        && !m_zTail.isEmpty()) {
         const char last = m_zTail.back();
         const char before = m_zTail.size() > 1 ? m_zTail[m_zTail.size() - 2] : '\n';
         if ((last == 'C' && (before == 'C' || !QChar::isLetterOrNumber(uchar(before))))
@@ -1233,7 +1637,7 @@ void SessionWidget::buildModemMenu(QMenu *menu)
 {
     using P = ModemTransfer::Protocol;
     const bool can = canSendCommands();
-    for (P p : {P::Xmodem, P::Xmodem1k, P::Ymodem, P::Zmodem}) {
+    for (P p : {P::Xmodem, P::Xmodem1k, P::Ymodem, P::Zmodem, P::Kermit}) {
         const QString name = ModemTransfer::protocolName(p);
         menu->addAction(tr("Send with %1...").arg(name), this, [this, p, name] {
             const bool single = p == P::Xmodem || p == P::Xmodem1k;
@@ -1248,8 +1652,16 @@ void SessionWidget::buildModemMenu(QMenu *menu)
             sendModem(int(p), files);
         })->setEnabled(can);
     }
+    menu->addAction(tr("Resume with Zmodem..."), this, [this] {
+        const QStringList files = QFileDialog::getOpenFileNames(window(), tr("Resume with Zmodem"));
+        if (files.isEmpty())
+            return;
+        sendCommand("rz -r");
+        sendModem(int(P::Zmodem), files, true);
+    })->setEnabled(can);
+    menu->addAction(tr("Send ASCII File..."), this, &SessionWidget::askAsciiFile)->setEnabled(can);
     menu->addSeparator();
-    for (P p : {P::Xmodem, P::Ymodem, P::Zmodem}) {
+    for (P p : {P::Xmodem, P::Ymodem, P::Zmodem, P::Kermit}) {
         const QString name = ModemTransfer::protocolName(p);
         menu->addAction(tr("Receive with %1...").arg(name), this, [this, p, name] {
             if (p == P::Xmodem) {
@@ -1315,6 +1727,11 @@ bool SessionWidget::atPasswordPrompt() const
     return ConfigPush::looksLikePasswordPrompt(m_view->rowText(m_view->cursorRow()));
 }
 
+QString SessionWidget::cursorLine() const
+{
+    return m_view->rowText(m_view->cursorRow());
+}
+
 void SessionWidget::buildPasswordMenu(QMenu *menu)
 {
     const QList<SavedPassword> saved = m_savedPasswords ? m_savedPasswords() : QList<SavedPassword>();
@@ -1326,6 +1743,8 @@ void SessionWidget::buildPasswordMenu(QMenu *menu)
 
 void SessionWidget::sendSavedPassword(const QString &name, const QString &account)
 {
+    if (m_locked)
+        return;
     // Sent to anything but a hidden prompt it would land on screen and in
     // the shell's history.
     if (!ConfigPush::looksLikePasswordPrompt(m_view->rowText(m_view->cursorRow()))) {
@@ -1351,6 +1770,8 @@ void SessionWidget::sendSavedPassword(const QString &name, const QString &accoun
             self->m_pushBar->answerSecret(pw);
         } else if (!self->m_push->running()) {
             sshlx_session_text(self->m_session, (pw + '\r').toUtf8().constData());
+            if (self->m_recorder)
+                self->m_recorder->password(name);
         }
     });
 }
@@ -1439,7 +1860,26 @@ void SessionWidget::buildContextMenu(QMenu *menu, const QString &link)
                     &SessionWidget::fileTransferRequested)
         ->setEnabled(protocol() == protocolId("ssh"));
 
-    buildModemMenu(menu->addMenu(Icons::get("usb"), tr("Xmodem, Ymodem, Zmodem")));
+    buildModemMenu(menu->addMenu(Icons::get("usb"), tr("Xmodem, Ymodem, Zmodem, Kermit")));
+    menu->addAction(tr("Received Data (He&x)"), this, &SessionWidget::showHexView);
+
+    QAction *lockAct = menu->addAction(Icons::get("lock"), tr("Loc&k Session"));
+    lockAct->setCheckable(true);
+    lockAct->setChecked(m_locked);
+    lockAct->setEnabled(!m_filePanel);
+    connect(lockAct, &QAction::toggled, this, &SessionWidget::setLocked);
+    if (logEnabled()) {
+        QMenu *logMenu = menu->addMenu(Icons::get("save"), tr("Session Lo&g"));
+        QAction *pause = logMenu->addAction(tr("&Pause Logging"));
+        pause->setCheckable(true);
+        pause->setChecked(m_logPaused);
+        connect(pause, &QAction::toggled, this, &SessionWidget::setLogPaused);
+        logMenu->addAction(tr("&Rotate Now"), this, &SessionWidget::rotateLog);
+    }
+    QAction *rec = menu->addAction(Icons::get("script"), recording() ? tr("Stop Recording Script...")
+                                                                     : tr("Record Script"));
+    connect(rec, &QAction::triggered, this, &SessionWidget::recordToggleRequested);
+    rec->setEnabled(!m_filePanel);
 
     QMenu *macros = menu->addMenu(Icons::get("script"), tr("E&xecute Macro"));
     addMacrosToMenu(macros, loadMacros(), canSend, [this](const Macro &m) {

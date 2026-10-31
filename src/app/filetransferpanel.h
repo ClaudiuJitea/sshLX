@@ -41,6 +41,8 @@ public:
 
     bool busy() const;
     void uploadPaths(const QStringList &paths);
+    // As soon as the connection is ready, or now if it is.
+    void uploadWhenReady(const QStringList &paths);
     void setLocalDir(const QString &dir);
     QString remoteDir() const { return m_remoteDir; }
     bool scpOnly() const { return m_scpOnly; }
@@ -58,6 +60,7 @@ private:
         QTreeWidgetItem *item = nullptr;
     };
 
+    QStringList m_pendingUploads;
     void onHostState(sshlx_state st);
     // Runs fn once s can really send, or never if its connection ends first.
     void whenSendReady(SessionWidget *s, std::function<void()> fn);

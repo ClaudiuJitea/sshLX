@@ -8,6 +8,8 @@
 #include <unistd.h>
 #include <cstring>
 
+#include "cli.h"
+#include "dialogkit.h"
 #include "mainwindow.h"
 #include "optionsdialog.h"
 #include "theme.h"
@@ -65,7 +67,23 @@ int main(int argc, char **argv)
             }
     }
 
+    // "sshLX list", "sshLX run ..." and so on need no window.
+    if (argc > 1 && isCliCommand(argv[1]))
+        return runCli(argc, argv);
+
+    // A link or host: the running window takes it, if there is one.
+    QString target;
+    if (argc > 1) {
+        QString first = QString::fromLocal8Bit(argv[1]);
+        if (first == "connect" && argc > 2)
+            first = QString::fromLocal8Bit(argv[2]);
+        if (!first.startsWith('-'))
+            target = first;
+    }
+
     QApplication app(argc, argv);
+    if (!target.isEmpty() && MainWindow::sendToRunningInstance(MainWindow::instanceSocket(), target))
+        return 0;
     QApplication::setOrganizationName("sshLX");
     QApplication::setApplicationName("sshLX");
     QApplication::setApplicationVersion(SSHLX_VERSION);
@@ -90,6 +108,12 @@ int main(int argc, char **argv)
         g_main = &w;
         w.show();
         w.restoreStartupState();
+        w.listenForInstances(MainWindow::instanceSocket());
+        if (!target.isEmpty()) {
+            QString error;
+            if (!w.connectTo(target, true, &error))
+                DialogKit::warning(&w, QStringLiteral("sshLX"), error);
+        }
         rc = app.exec();
         g_main = nullptr;
     }

@@ -922,3 +922,41 @@ reviewed draft:
   saved ADS layouts stay valid.
 - **Workspaces** are JSON files holding `openTabEntries()` and the ADS layout, so
   they share the startup restore path.
+
+### 11.y Working across tabs (after 0.7.3)
+
+- **Live typing** replays the engine key event on each target with
+  `sshlx_session_key`, so each tab applies its own keyboard settings.
+- **Locking** is a flag on SessionWidget and TerminalView of its own: the input
+  block that pushes and transfers use comes and goes by itself.
+- **Key mappings** are checked before the engine and in ShortcutOverride, so they
+  beat application shortcuts. "Send next shortcut to terminal" bypasses them.
+- **ScriptRecorder** keeps nothing typed at a line that looks like a password
+  prompt. Hidden prompts have no other signal available to the UI.
+- Scripts' `wait_for` buffer starts from the cursor's line and is cleared by each
+  send, so a prompt on screen counts and an old prompt can't answer a new command.
+- **Log rotation** closes PuTTY's log with `log_reconfig` on a private copy of the
+  Conf (`sshlx_session_log_set_paused`), renames the file and reopens it in append
+  mode. `xlatlognam` is private to PuTTY, so `LogRotate::expandName` repeats its
+  rules. With `&T` in the name each rotated log gets a new name anyway.
+- Importing a connection tree clears logon scripts: a shared file must not be able
+  to run a program when a connection opens.
+
+### 11.z Connect bar, command line and the rest (after 0.7.3)
+
+- **Command line:** subcommands of the same binary, decided before any
+  QApplication exists, so they need no display. CliSession is a plain engine
+  session with no terminal. Host key questions go to `/dev/tty` and are refused
+  when there is none, so a script can't connect to an unknown host by accident.
+- `stderr_data` is an engine callback for raw mode. Without it, the remote's stderr
+  goes to a terminal that the command line doesn't have.
+- **Links:** `Exec=sshLX %U`. A QLocalServer in the runtime directory hands targets
+  to a running window. Only targets without a scheme may match saved connections,
+  so a web page's link can't reach a stored login.
+- **Kermit** uses 94-byte packets and the one-character checksum, with no streaming.
+  Server commands, among them running programs, are refused.
+- **Zmodem resume** keeps `NAME.part` and asks the sender for a CRC of that many
+  bytes (ZCRC) before trusting it. A mismatch or no answer restarts from zero.
+- **Cipher names** come from PuTTY's event log, the only place it reports them, so a
+  rewording in a later PuTTY shows as blank status rather than a failure.
+

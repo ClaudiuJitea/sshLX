@@ -26,6 +26,12 @@ public:
 
     void setTarget(Target t);
     void setChosen(const QList<SessionWidget *> &tabs);
+    void setTargetGroup(const QString &name);
+    // The list of tab groups changed.
+    void refreshGroups();
+    // Each key typed in a terminal also goes to the other target tabs.
+    void setLive(bool on);
+    bool live() const;
     // The tabs the target covers, whether or not they can take a command now.
     QList<SessionWidget *> targets() const;
     // Returns how many tabs took it; the label says what happened to the rest.
@@ -35,6 +41,7 @@ public:
 
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;
+    void hideEvent(QHideEvent *e) override;
 
 private:
     void sendInput();
@@ -46,6 +53,7 @@ private:
     QComboBox *m_target;
     QToolButton *m_choose;
     QPlainTextEdit *m_input;
+    class QCheckBox *m_live;
     QPushButton *m_send;
     QLabel *m_summary;
     QList<QPointer<SessionWidget>> m_chosen;

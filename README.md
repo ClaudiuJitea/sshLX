@@ -35,12 +35,32 @@
 - **File transfer:** right-click an SSH connection or tab and choose **File Transfer** for a two-pane file manager in its own tab: drag files either way, whole folders included, with a queue, a toolbar for rename, delete and new folder on either side, and a filter. It logs in the same way as the connection, saved passwords included. Devices without SFTP, such as many switches, get SCP instead: type the remote path and send or fetch one file at a time.
 - **Credentials Manager:** shared logins (user name, password, private key and its passphrase) linked to connections or whole folders. Change one and every linked connection uses it at its next login. Secrets are kept only in the system keyring. For prompts inside a session, such as `sudo`, use **Send Saved Password** in the terminal menu.
 - **Command Window** (View menu, Ctrl+Shift+B): type a command once and send it to the current tab, the visible tabs, all tabs or a chosen few. Several lines go out one at a time, and each tab pauses on its own if its device complains.
-- **Button bar:** your macros as a row of buttons, with folders as drop-down menus. Move it to the top or bottom edge. Right-click a button to run it on the Command Window's tabs. A macro can also run a Python script.
-- **Logon actions:** right-click a connection or folder for steps that run after connecting: wait for some text, then send a reply or a saved password, such as `enable` followed by its password. Passwords go only to a line that looks like a password prompt.
+  Tick **Type live** and each key typed in a terminal also goes to those tabs. It turns off when the Command Window closes.
+- **Tab groups:** right-click a tab → Tab Group. Groups appear as Command Window targets and are kept in workspaces.
+- **Session locking:** a locked tab takes no typing, paste, macro, command or script, and is skipped by sends to several tabs.
+- **Active Sessions** (View menu): a filterable list of open tabs, to reconnect, disconnect, lock, group or close several at once.
+- **Button bars:** your macros as a row of buttons, with folders as drop-down menus. Move a bar to the top or bottom edge. Give macros different bars and pick one from the list, or link a bar to a connection or folder so it follows the tab. Right-click a button to run it on the Command Window's tabs. A macro can also run a Python script.
+- **Command Manager** (View menu): the same macros as a filterable tree.
+- **Key mappings** (Tools menu): keys that send text, or run a macro or script.
+- **Bulk edit:** select several connections or folders, right-click → Edit Connections, and tick what to change.
+- **Logon actions:** right-click a connection or folder for steps that run after connecting: wait for some text, then send a reply or a saved password, such as `enable` followed by its password. Passwords go only to a line that looks like a password prompt. A Python script can follow the steps.
 - **Named workspaces** (View → Workspaces): save the open tabs and their layout under a name, and reopen them, replacing the open tabs or joining them.
 - **Xmodem, Ymodem and Zmodem** in the terminal menu, for ROM monitors, boot loaders and other devices with no SFTP, on serial, SSH or Telnet. Starting `sz` or `rz` on the remote side offers a Zmodem transfer, and nothing is saved until you accept.
 - **TFTP server** (Tools menu) for switches and routers that fetch images and configurations. It serves one folder, read-only unless you allow uploads.
-- **Python scripting** (Tools → Run Script): drive tabs from a script, wait for output and read the screen, in the system's own Python. Scripts can use saved passwords but never see them. See [docs/SCRIPTING.md](docs/SCRIPTING.md).
+- **Python scripting** (Tools → Run Script): drive tabs from a script, wait for output and read the screen, in the system's own Python. Scripts can use saved passwords but never see them. **Record Script** turns what you type into a script, leaving passwords out. See [docs/SCRIPTING.md](docs/SCRIPTING.md).
+- **Connect bar** (View menu): type a saved name, `user@host:port`, or an `ssh://` or `telnet://` address. Beside it, a box that marks a word in every tab until cleared.
+- **Links:** `ssh://` and `telnet://` links from a browser or another app open a tab in the running window. Links never use saved logins.
+- **Command-line tools:** `sshLX list`, `run`, `get`, `put` and `keys`, using your connections and saved passwords. See `sshLX --help`.
+- **Colour schemes:** save a tab's colours under a name, and export or import them as a file (Appearance menu).
+- **Session status:** the protocol, cipher, size, connected time and data received, in the status bar.
+- **Drop a file on a terminal** to send it with Zmodem, Ymodem or SFTP.
+- **Scratchpad** (View menu): a notes tab that saves itself.
+- **Received Data (Hex)** in the terminal menu shows what a session receives, byte by byte.
+- **Anti-idle text:** in Logon Actions, send a chosen string after a period with no typing.
+- **Kermit** joins Xmodem, Ymodem and Zmodem, and **Send ASCII File** types a text file at a chosen pace. An interrupted Zmodem receive keeps its `.part` file and carries on when the same file is sent again, and Resume with Zmodem does the same for sends.
+- **Session logs:** pause and resume a log from the terminal menu, and rotate logs by size or age (Options → Terminal).
+- **Smart cards (PIV/CAC):** load the card into OpenSSH's agent with `ssh-add -s /usr/lib/x86_64-linux-gnu/opensc-pkcs11.so`, then log in with **Attempt authentication using Pageant** on, which is the default. For an SSH certificate, set **Certificate to use with the key** in the Config panel.
+- **Host-based printing:** set **Printer command** in the Config panel, such as `lpr`, and what the remote side sends to the printer goes there.
 - **In-tab prompts** for host keys, weak crypto and log files, with a **Reconnect** bar when a session ends.
 - **Opt-in password storage** in the system keyring (GNOME Keyring / KWallet), never in a file.
 - **Dark and light themes,** configurable shortcuts and an interface font size setting.
@@ -56,9 +76,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.7.3_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.7.7_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.7.3-x86_64.AppImage && ./sshLX-0.7.3-x86_64.AppImage
+chmod +x sshLX-0.7.7-x86_64.AppImage && ./sshLX-0.7.7-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
@@ -87,7 +107,7 @@ sshLX doesn't launch `putty`. PuTTY's own code is compiled in, unchanged:
 - the terminal emulator and cryptography;
 - configuration and session storage.
 
-sshLX replaces only the GTK front end, with a small C engine API and a Qt UI. It adds one back end of its own: **Local shell** (File → New Local Shell, Ctrl+Shift+T), your login shell in a pseudo-terminal on this machine. One PuTTY file has a documented override that fixes three serial bugs. See [ARCHITECTURE-NOTES.md](ARCHITECTURE-NOTES.md) and [PUTTY-OVERRIDES.md](PUTTY-OVERRIDES.md).
+sshLX replaces only the GTK front end, with a small C engine API and a Qt UI. It adds one back end of its own: **Local shell** (File → New Local Shell, Ctrl+Shift+T), your login shell in a pseudo-terminal on this machine. One PuTTY file has a documented override that fixes three serial bugs. See [ARCHITECTURE-NOTES.md](docs/ARCHITECTURE-NOTES.md) and [PUTTY-OVERRIDES.md](docs/PUTTY-OVERRIDES.md).
 
 | Data | Location |
 |---|---|

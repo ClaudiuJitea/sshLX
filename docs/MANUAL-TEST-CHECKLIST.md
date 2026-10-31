@@ -104,6 +104,36 @@ Automated against a fake device by `ctest` (`tests/session_e2e_test.cpp`); these
 - [ ] Run a script from each place: Tools → Run Script, Tools → Scripts, a macro.
 - [ ] In the AppImage too: a script finds the system's Python.
 
+## 1h. Live typing, groups, locking, mappings, recording, logs
+
+- [ ] Type live to two real SSH tabs, including Ctrl+C and arrow keys.
+- [ ] Group tabs from the tab menu; the group appears as a Command Window target.
+- [ ] A locked tab ignores typing, mouse paste and broadcasts, and shows a lock on its tab.
+- [ ] Active Sessions: select several, then reconnect, lock and close them.
+- [ ] Key mapping on a function key, and on a key sshLX uses as a shortcut.
+- [ ] A connection's linked button bar appears with its tab and goes with it.
+- [ ] Bulk edit on two connections and a folder; their other settings stay the same.
+- [ ] Logon script on a real device.
+- [ ] Record a session with a `sudo` prompt: the password is not in the script.
+- [ ] Rotate a real log by size, and check `Old logs to keep` removes the oldest.
+
+## 1i. Connect bar, links, command line, transfers
+
+- [ ] Connect bar: a saved name, `user@host`, `telnet://host:port`, and a mistyped host.
+- [ ] Highlight box: a word lights up in every tab, including new output, and clears.
+- [ ] After installing the `.deb`, an `ssh://` link in a browser opens a tab in the running window.
+- [ ] `sshLX run`, `get` and `put` against a real server, with a password from the keyring.
+- [ ] `sshLX keys install` on a test account, then log in with that key.
+- [ ] Save, export, import and delete a colour scheme; new schemes appear in the menu.
+- [ ] Status bar on SSH, Telnet, serial and a local shell.
+- [ ] Drag a file from the desktop onto a terminal, on SSH and on serial.
+- [ ] Scratchpad text survives a restart.
+- [ ] Hex view during a real session; Pause and Save.
+- [ ] Anti-idle on a server that drops idle sessions.
+- [ ] Kermit with a real device or C-Kermit, and over a 7-bit serial line.
+- [ ] Send ASCII to a slow console; Stop part way.
+- [ ] Interrupt a large Zmodem receive by closing the far end, then send it again.
+
 ## 2. Settings compatibility
 
 | # | Step | Expected |

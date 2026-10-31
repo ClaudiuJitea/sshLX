@@ -144,6 +144,9 @@ static QList<PropertyDef> buildCurated()
               {4, "VT100+"}, {5, "SCO"}, {6, "Xterm 216+"}});
     l << def("Terminal", "Bell", "beep", K::Enum, "Action on a terminal bell.",
              {{0, tr("None")}, {1, tr("System beep")}, {2, tr("Visual bell")}});
+    l << def("Terminal", "Printer command", "printer", K::Text,
+             "Host-based printing: a program, such as lpr, that gets what the remote "
+             "side sends to the printer. Empty: printing is off.");
     l << def("Terminal", "Answerback to ^E", "answerback", K::Text,
              "String returned to the server on Ctrl-E.");
 
@@ -223,7 +226,10 @@ static QList<PropertyDef> buildCurated()
     // ---- SSH ----
     l << def("SSH", "Private key file", "keyfile", K::File,
              "Private key for public-key authentication (PuTTY .ppk).");
-    l << def("SSH", "Attempt authentication using Pageant", "tryagent", K::Bool, "");
+    l << def("SSH", "Certificate to use with the key", "detached_cert", K::File,
+             "An OpenSSH certificate for the key, from an SSH certificate authority.");
+    l << def("SSH", "Attempt authentication using Pageant", "tryagent", K::Bool,
+             "Use keys from an agent, which is how smart cards work: see the README.");
     l << def("SSH", "Allow agent forwarding", "agentfwd", K::Bool, "");
     l << def("SSH", "Keyboard-interactive auth", "try_ki_auth", K::Bool, "");
     l << def("SSH", "GSSAPI auth", "try_gssapi_auth", K::Bool, "");

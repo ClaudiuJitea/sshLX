@@ -9,7 +9,13 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QDockWidget>
+#include <QFontDatabase>
 #include <QInputDialog>
+#include <QLineEdit>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QLocale>
+#include <QTimer>
 #include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockWidget.h>
@@ -37,11 +43,14 @@
 #include <QRegularExpression>
 #include <functional>
 
+#include "commandmanager.h"
+#include "connecttarget.h"
 #include "commandwindow.h"
 #include "connectionspanel.h"
 #include "connectionstore.h"
 #include "connectiontreemodel.h"
 #include "documentarea.h"
+#include "keybindings.h"
 #include "keyring.h"
 #include "macros.h"
 #include "optionsdialog.h"
@@ -51,6 +60,7 @@
 #include "theme.h"
 #include "serialmanager.h"
 #include "serialportlist.h"
+#include "sessionsmanager.h"
 #include "sessionwidget.h"
 #include "terminallook.h"
 #include "settingsdialog.h"
@@ -201,6 +211,91 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         dlg.exec();
     };
     connect(m_buttonBar, &ButtonBar::manageRequested, this, manageMacros);
+    m_sessionsPanel = new SessionsManager(m_docs, this);
+    m_sessionsDock = new QDockWidget(tr("Active Sessions"), this);
+    m_sessionsDock->setObjectName("SessionsDock");
+    m_sessionsDock->setFeatures(QDockWidget::DockWidgetClosable);
+    m_sessionsDock->setWidget(m_sessionsPanel);
+    addDockWidget(Qt::RightDockWidgetArea, m_sessionsDock);
+    m_sessionsDock->setVisible(st.value("window/sessionsPanel", false).toBool());
+    m_commandManager = new CommandManager(this);
+    m_commandsDock = new QDockWidget(tr("Command Manager"), this);
+    m_commandsDock->setObjectName("CommandsDock");
+    m_commandsDock->setFeatures(QDockWidget::DockWidgetClosable);
+    m_commandsDock->setWidget(m_commandManager);
+    addDockWidget(Qt::RightDockWidgetArea, m_commandsDock);
+    m_commandsDock->setVisible(st.value("window/commandManager", false).toBool());
+    connect(m_commandManager, &CommandManager::macroTriggered, this, &MainWindow::runMacro);
+    connect(m_commandManager, &CommandManager::manageRequested, this, manageMacros);
+    m_recordLabel = new QLabel;
+    statusBar()->addPermanentWidget(m_recordLabel);
+    m_statusLabel = new QLabel;
+    statusBar()->addPermanentWidget(m_statusLabel);
+    auto *statusTimer = new QTimer(this);
+    connect(statusTimer, &QTimer::timeout, this, &MainWindow::updateStatus);
+    statusTimer->start(1000);
+    connect(m_docs, &DocumentArea::currentSessionChanged, this, &MainWindow::updateStatus);
+
+    // The quick bar: connect to a host, and mark a word in every tab.
+    m_quickBar = new QToolBar(tr("Connect Bar"), this);
+    m_quickBar->setObjectName("QuickBar");
+    m_quickBar->setFloatable(false);
+    m_quickBar->setAllowedAreas(Qt::TopToolBarArea | Qt::BottomToolBarArea);
+    auto *connectBox = new QLineEdit;
+    connectBox->setObjectName("connectBox");
+    connectBox->setPlaceholderText(tr("Connect: name, user@host:port or ssh://..."));
+    connectBox->setMaximumWidth(340);
+    connectBox->setAccessibleName(tr("Connect to"));
+    auto *markBox = new QLineEdit;
+    markBox->setObjectName("highlightBox");
+    markBox->setPlaceholderText(tr("Highlight a word"));
+    markBox->setClearButtonEnabled(true);
+    markBox->setMaximumWidth(220);
+    markBox->setAccessibleName(tr("Highlight a word"));
+    m_quickBar->addWidget(connectBox);
+    m_quickBar->addSeparator();
+    m_quickBar->addWidget(markBox);
+    addToolBar(Qt::TopToolBarArea, m_quickBar);
+    m_quickBar->setVisible(st.value("window/quickBar", true).toBool());
+    connect(connectBox, &QLineEdit::returnPressed, this, [this, connectBox] {
+        QString error;
+        if (connectTo(connectBox->text(), true, &error))
+            connectBox->clear();
+        else
+            statusBar()->showMessage(error, 6000);
+    });
+    connect(markBox, &QLineEdit::textChanged, this, &SessionWidget::setAdHocHighlight);
+
+    // The scratchpad is a tab beside the sessions, kept in a file of its own.
+    auto *pad = new QPlainTextEdit;
+    pad->setObjectName("scratchpad");
+    pad->setAccessibleName(tr("Scratchpad"));
+    pad->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    const QString padPath = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation)
+        + "/scratchpad.txt";
+    QFile padFile(padPath);
+    if (padFile.open(QIODevice::ReadOnly))
+        pad->setPlainText(QString::fromUtf8(padFile.readAll()));
+    auto *padSave = new QTimer(this);
+    padSave->setSingleShot(true);
+    padSave->setInterval(500);
+    connect(pad, &QPlainTextEdit::textChanged, padSave, qOverload<>(&QTimer::start));
+    connect(padSave, &QTimer::timeout, this, [pad, padPath] {
+        QDir().mkpath(QFileInfo(padPath).path());
+        QSaveFile f(padPath);
+        if (f.open(QIODevice::WriteOnly)) {
+            f.write(pad->toPlainText().toUtf8());
+            f.commit();
+        }
+    });
+    m_scratchDock = new ads::CDockWidget(m_dockManager, tr("Scratchpad"));
+    m_scratchDock->setObjectName("ScratchpadDock");
+    m_scratchDock->setWidget(pad, ads::CDockWidget::ForceNoScrollArea);
+    m_scratchDock->setIcon(Icons::get("event-log"));
+    m_dockManager->addDockWidgetTabToArea(m_scratchDock, m_startDock->dockAreaWidget());
+    m_scratchDock->toggleView(false);
+    m_startDock->raise();
+    connect(m_docs, &DocumentArea::currentSessionChanged, this, &MainWindow::applyTabButtonBar);
     m_tftp = new TftpServer(this);
     m_scripts = new ScriptHost(this);
     auto *tftpLabel = new QLabel;
@@ -287,6 +382,10 @@ void MainWindow::buildMenus()
     sc.add("view.commandWindow", commandAct, QKeySequence("Ctrl+Shift+B"));
     view->addAction(commandAct);
     view->addAction(m_buttonBar->toggleViewAction());
+    view->addAction(m_sessionsDock->toggleViewAction());
+    view->addAction(m_commandsDock->toggleViewAction());
+    view->addAction(m_quickBar->toggleViewAction());
+    view->addAction(m_scratchDock->toggleViewAction());
     m_workspaceMenu = view->addMenu(Icons::get("workspace"), tr("&Workspaces"));
     connect(m_workspaceMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildWorkspaceMenu);
     QAction *panelsRight = view->addAction(tr("Side Panels on the R&ight"));
@@ -412,6 +511,13 @@ void MainWindow::buildMenus()
         MacroDialog dlg(this);
         dlg.exec();
     });
+    tools->addAction(Icons::get("keyboard"), tr("&Key Mappings..."), this, [this] {
+        KeyBindingsDialog dlg(this);
+        dlg.exec();
+    });
+    tools->addAction(Icons::get("script"), tr("Record Scrip&t"), this, [this] {
+        toggleRecording(current());
+    });
     QAction *runScript = tools->addAction(Icons::get("script"), tr("&Run Script..."), this,
                                           &MainWindow::runScriptFile);
     sc.add("tools.runScript", runScript, QKeySequence());
@@ -458,6 +564,160 @@ void MainWindow::runMacro(const Macro &macro, bool onTargets)
     } else {
         statusBar()->showMessage(tr("Open a terminal tab first."), 4000);
     }
+}
+
+void MainWindow::runMacroByName(const QString &name)
+{
+    for (const Macro &m : loadMacros()) {
+        if (m.name == name) {
+            runMacro(m, false);
+            return;
+        }
+    }
+    statusBar()->showMessage(tr("No macro is called \"%1\".").arg(name), 4000);
+}
+
+void MainWindow::applyTabButtonBar(SessionWidget *s)
+{
+    const ConnectionNode *n = s ? m_store->tree().findById(s->connectionId()) : nullptr;
+    const QString bar = n ? m_store->tree().resolveButtonBar(n) : QString();
+    m_buttonBar->setForcedBar(bar.isEmpty() ? QString() : bar);
+}
+
+void MainWindow::toggleRecording(SessionWidget *s)
+{
+    if (!s) {
+        statusBar()->showMessage(tr("Open a terminal tab first."), 4000);
+        return;
+    }
+    if (!s->recording()) {
+        s->startRecording();
+        m_recordLabel->setText(tr("Recording %1").arg(s->title()));
+        return;
+    }
+    const QString script = s->stopRecording();
+    m_recordLabel->clear();
+    if (script.isEmpty()) {
+        statusBar()->showMessage(tr("Nothing was recorded."), 4000);
+        return;
+    }
+    QDir().mkpath(ScriptHost::scriptsFolder());
+    const QString path = QFileDialog::getSaveFileName(this, tr("Save Recorded Script"),
+                                                      ScriptHost::scriptsFolder() + "/recorded.py",
+                                                      tr("Python scripts (*.py)"));
+    if (path.isEmpty())
+        return;
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(script.toUtf8()) < 0 || !f.commit())
+        DialogKit::error(this, tr("Script not saved"), f.errorString());
+}
+
+SessionWidget *MainWindow::connectTo(const QString &text, bool typed, QString *error)
+{
+    const QString wanted = text.trimmed();
+    if (typed) {
+        for (ConnectionNode *c : m_store->tree().connections())
+            if (c->name == wanted || c->path() + '/' + c->name == wanted) {
+                const QList<SessionWidget *> before = sessions();
+                openConnection(c);
+                for (SessionWidget *s : sessions())
+                    if (!before.contains(s))
+                        return s;
+                return nullptr;
+            }
+    }
+    ConnectTarget t;
+    if (!ConnectTarget::parse(wanted, &t)) {
+        *error = tr("\"%1\" is not a connection or a host name.").arg(wanted);
+        return nullptr;
+    }
+    sshlx_conf *c = sshlx_conf_new_default();
+    sshlx_conf_set_int(c, sshlx_conf_key_protocol(), SessionWidget::protocolId(t.protocol.toUtf8().constData()));
+    sshlx_conf_set_str(c, sshlx_conf_key_find("host"), t.host.toUtf8().constData());
+    sshlx_conf_set_int(c, sshlx_conf_key_find("port"), t.port ? t.port : t.protocol == "telnet" ? 23 : 22);
+    if (!t.user.isEmpty())
+        sshlx_conf_set_str(c, sshlx_conf_key_find("username"), t.user.toUtf8().constData());
+    SessionWidget *s = openSession(c, t.host);
+    sshlx_conf_free(c);
+    return s;
+}
+
+QString MainWindow::instanceSocket()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation) + "/sshlx-instance";
+}
+
+bool MainWindow::sendToRunningInstance(const QString &socketName, const QString &target)
+{
+    QLocalSocket s;
+    s.connectToServer(socketName);
+    if (!s.waitForConnected(500))
+        return false;
+    s.write(target.toUtf8() + '\n');
+    return s.waitForBytesWritten(1000);
+}
+
+void MainWindow::listenForInstances(const QString &socketName)
+{
+    // Another window has it: that one takes the links.
+    QLocalSocket probe;
+    probe.connectToServer(socketName);
+    if (probe.waitForConnected(200))
+        return;
+    QLocalServer::removeServer(socketName);    // left by a crash
+    m_instanceServer = new QLocalServer(this);
+    m_instanceServer->setSocketOptions(QLocalServer::UserAccessOption);
+    if (!m_instanceServer->listen(socketName))
+        return;
+    connect(m_instanceServer, &QLocalServer::newConnection, this, [this] {
+        while (QLocalSocket *c = m_instanceServer->nextPendingConnection()) {
+            connect(c, &QLocalSocket::disconnected, c, &QObject::deleteLater);
+            connect(c, &QLocalSocket::readyRead, this, [this, c] {
+                while (c->canReadLine()) {
+                    const QString target = QString::fromUtf8(c->readLine()).trimmed();
+                    QString error;
+                    // Links have a scheme, and only "sshLX NAME" typed by the
+                    // user names a saved connection.
+                    if (connectTo(target, !target.contains("://"), &error)) {
+                        raise();
+                        activateWindow();
+                    } else {
+                        statusBar()->showMessage(error, 6000);
+                    }
+                }
+            });
+        }
+    });
+}
+
+QString MainWindow::statusText() const
+{
+    SessionWidget *s = m_docs->currentSession();
+    if (!s)
+        return {};
+    const SessionWidget::Status st = s->status();
+    QStringList parts{st.protocol};
+    if (!st.cipherIn.isEmpty())
+        parts << (st.cipherIn == st.cipherOut || st.cipherOut.isEmpty()
+                      ? st.cipherIn : st.cipherOut + " / " + st.cipherIn);
+    parts << QStringLiteral("%1x%2").arg(st.cols).arg(st.rows);
+    if (st.connectedSecs >= 0) {
+        const qint64 t = st.connectedSecs;
+        parts << QStringLiteral("%1:%2:%3").arg(t / 3600, 2, 10, QChar('0'))
+                     .arg(t / 60 % 60, 2, 10, QChar('0')).arg(t % 60, 2, 10, QChar('0'));
+    }
+    parts << QLocale().formattedDataSize(st.received, 1, QLocale::DataSizeTraditionalFormat);
+    return parts.join(QStringLiteral("  |  "));
+}
+
+QWidget *MainWindow::scratchpad() const
+{
+    return m_scratchDock->widget();
+}
+
+void MainWindow::updateStatus()
+{
+    m_statusLabel->setText(statusText());
 }
 
 void MainWindow::closeTabNow(SessionWidget *s)
@@ -717,6 +977,37 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
     });
     connect(s, &SessionWidget::scriptRequested, this, [this](const QString &path) {
         m_scripts->run(path);
+    });
+    connect(s, &SessionWidget::logonScriptRequested, this, [this, s](const QString &path) {
+        m_scripts->run(path, {}, s);
+    });
+    connect(s, &SessionWidget::macroRequested, this, &MainWindow::runMacroByName);
+    connect(s, &SessionWidget::sftpUploadRequested, this, [this, s](const QStringList &paths) {
+        if (SessionWidget *t = openFileTransfer(s->conf(), s->displayName(), s->connectionId()))
+            if (auto *panel = t->findChild<FileTransferPanel *>())
+                panel->uploadWhenReady(paths);
+    });
+    s->setAntiIdle([this, connectionId]() -> SessionWidget::AntiIdle {
+        const ConnectionNode *n = m_store->tree().findById(connectionId);
+        const ConnectionNode *src = n ? m_store->tree().resolveAntiIdle(n) : nullptr;
+        return src ? SessionWidget::AntiIdle{src->antiIdleText, src->antiIdleSeconds}
+                   : SessionWidget::AntiIdle{};
+    });
+    connect(s, &SessionWidget::recordToggleRequested, this, [this, s] { toggleRecording(s); });
+    connect(s, &SessionWidget::lockChanged, this, [this, s] {
+        m_docs->updateTab(s);
+        m_sessionsPanel->refreshSoon();
+    });
+    connect(s, &SessionWidget::identityChanged, this, [this, s] {
+        m_docs->updateTab(s);
+        m_command->refreshGroups();
+        m_sessionsPanel->refreshSoon();
+    });
+    connect(s, &SessionWidget::stateChanged, m_sessionsPanel, &SessionsManager::refreshSoon);
+    connect(s, &SessionWidget::titleChanged, m_sessionsPanel, &SessionsManager::refreshSoon);
+    s->setLogonScript([this, connectionId] {
+        const ConnectionNode *n = m_store->tree().findById(connectionId);
+        return n ? m_store->tree().resolveLogonScript(n) : QString();
     });
     attachPasswords(s, connectionId);
     s->setLogonSteps([this, connectionId] {
@@ -989,6 +1280,8 @@ void MainWindow::importTree()
         ConnectionNode *n = imported.root()->takeChild(0);
         std::function<void(ConnectionNode *)> fresh = [&](ConnectionNode *x) {
             x->id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            // A file from elsewhere must not get to run programs on connect.
+            x->logonScript.clear();
             for (ConnectionNode *c : x->children)
                 fresh(c);
         };
@@ -1133,7 +1426,7 @@ QStringList MainWindow::openTabEntries() const
         } else {
             continue;
         }
-        r << m_docs->dockName(s) + '\t' + kind + '\t' + ref;
+        r << m_docs->dockName(s) + '\t' + kind + '\t' + ref + '\t' + s->group();
     }
     return r;
 }
@@ -1147,6 +1440,9 @@ void MainWindow::saveWindowState()
     st.setValue("window/buttonBarBottom", toolBarArea(m_buttonBar) == Qt::BottomToolBarArea);
     st.setValue("window/commandWindow", !m_commandDock->isHidden());
     st.setValue("window/buttonBar", !m_buttonBar->isHidden());
+    st.setValue("window/sessionsPanel", !m_sessionsDock->isHidden());
+    st.setValue("window/commandManager", !m_commandsDock->isHidden());
+    st.setValue("window/quickBar", !m_quickBar->isHidden());
 }
 
 // Keeps the list of open tabs on disk while running, so that after an
@@ -1174,6 +1470,7 @@ int MainWindow::restoreTabs(const QStringList &entries)
         if (p.size() < 3 || p[2].isEmpty())
             continue;
         const QString &dock = p[0], &kind = p[1], &ref = p[2];
+        const QList<SessionWidget *> before = sessions();
         if (kind == "connection") {
             if (ConnectionNode *node = m_store->tree().findById(ref)) {
                 openConnection(node, false, dock);
@@ -1205,6 +1502,10 @@ int MainWindow::restoreTabs(const QStringList &entries)
             openLocalShell(dock);
             n++;
         }
+        if (!p.value(3).isEmpty())
+            for (SessionWidget *s : sessions())
+                if (!before.contains(s))
+                    s->setGroup(p[3]);
     }
     m_restoring = false;
     writeOpenTabsBreadcrumb();

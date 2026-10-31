@@ -19,7 +19,7 @@
 class ModemTransfer : public QObject {
     Q_OBJECT
 public:
-    enum class Protocol { Xmodem, Xmodem1k, Ymodem, Zmodem };
+    enum class Protocol { Xmodem, Xmodem1k, Ymodem, Zmodem, Kermit };
     Q_ENUM(Protocol)
 
     explicit ModemTransfer(QObject *parent = nullptr);
@@ -28,10 +28,15 @@ public:
     static QString protocolName(Protocol p);
 
     // Sends the files in order. Xmodem carries no name, so it takes one file.
-    void startSend(Protocol p, const QStringList &files);
+    // With resume, a Zmodem receiver that holds the start of a file carries on
+    // after it, as "sz -r" does.
+    void startSend(Protocol p, const QStringList &files, bool resume = false);
     // Saves into directory under the sender's names, never over an existing
     // file. Xmodem carries no name: saveAs names its file, and Xmodem also
     // cannot tell the file's length, so the last block keeps its padding.
+    // Zmodem keeps what arrived of an interrupted file as NAME.part. When the
+    // same file comes again, the sender's checksum of that part decides
+    // whether it continues from there or starts over.
     void startReceive(Protocol p, const QString &directory, const QString &saveAs = QString());
     void cancel();
 
@@ -68,7 +73,9 @@ private:
         XRecvBlock,
         // Zmodem
         ZSendInit, ZSendFileAck, ZSendData, ZSendWaitAck, ZSendEofAck, ZSendFin,
-        ZRecvHeader, ZRecvFileInfo, ZRecvData, ZRecvSinit, ZRecvFin
+        ZRecvHeader, ZRecvFileInfo, ZRecvData, ZRecvSinit, ZRecvFin, ZRecvResumeCheck,
+        // Kermit
+        KSendInit, KSendFile, KSendData, KSendEof, KSendBreak, KRecv
     };
 
     void fail(const QString &message);
@@ -80,7 +87,7 @@ private:
     void out(const QByteArray &data);
     void reportProgress();
     bool openNextSendFile();
-    bool openReceiveFile(const QString &name, qint64 size);
+    bool openReceiveFile(const QString &name, qint64 size, qint64 resumeAt = 0);
     bool finishReceiveFile();
     void discardReceiveFile();
 
@@ -115,6 +122,21 @@ private:
     void zPumpData();
     void zFinishSending();
     void zExpectData();
+
+    // Kermit
+    void kStart();
+    void kProcess();
+    void kTimeout();
+    void kArm();
+    void kSend(char type, int seq, const QByteArray &data);
+    void kSendNak(int seq);
+    void kApplyParams(const QByteArray &params);
+    QByteArray kEncodeByte(uchar b) const;
+    QByteArray kDecode(const QByteArray &data) const;
+    void kFileHeader();
+    void kNextData();
+    void kAfterAck(const QByteArray &data);
+    void kHandlePacket(char type, int seq, const QByteArray &data);
 
     Protocol m_protocol = Protocol::Xmodem;
     bool m_running = false, m_sending = false;
@@ -154,4 +176,11 @@ private:
     bool m_useBin32 = false;
     uchar m_zLast = 0;
     qint64 m_zAcked = 0;
+    bool m_zResume = false;
+    QString m_zResumeName;
+    qint64 m_zResumeSize = 0, m_zResumeAt = 0;
+
+    static constexpr int kMaxKermitRetries = 10;
+    int m_kSeq = 0, m_kMaxData = 89;
+    char m_kQctl = '#', m_kQbin = 0, m_kRept = 0;
 };

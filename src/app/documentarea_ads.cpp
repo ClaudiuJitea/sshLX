@@ -1,4 +1,7 @@
 #include "documentarea.h"
+
+#include <QInputDialog>
+#include <QLineEdit>
 #include "icons.h"
 
 #include <QBoxLayout>
@@ -206,6 +209,13 @@ void DocumentArea::buildTabMenu(SessionWidget *s, QMenu *menu)
     if (!s->isFileTransfer() && s->protocol() == SessionWidget::protocolId("ssh"))
         menu->addAction(Icons::get("export"), tr("File &Transfer"), s,
                         &SessionWidget::fileTransferRequested);
+    if (!s->isFileTransfer()) {
+        buildGroupMenu({s}, menu->addMenu(tr("Tab &Group")));
+        QAction *lock = menu->addAction(Icons::get("lock"), tr("Loc&k Session"));
+        lock->setCheckable(true);
+        lock->setChecked(s->locked());
+        connect(lock, &QAction::toggled, s, &SessionWidget::setLocked);
+    }
     menu->addSeparator();
     s->buildAppearanceMenu(menu->addMenu(Icons::get("palette"), tr("&Appearance")));
     menu->addAction(Icons::get("settings"), tr("Change &Settings..."), s,
@@ -265,10 +275,50 @@ void DocumentArea::updateTab(SessionWidget *s)
     QString t = s->title();
     if (t.endsWith(QLatin1String(" - sshLX")))
         t.chop(8);
+    if (!s->group().isEmpty())
+        t = QStringLiteral("[%1] %2").arg(s->group(), t);
     dw->setWindowTitle(t);
-    dw->setToolTip(s->title());
-    dw->setIcon(s->state() == SSHLX_STATE_DISCONNECTED
-                    ? Icons::get("disconnected") : s->protocolIcon());
+    dw->setToolTip(s->locked() ? tr("%1 (locked)").arg(s->title()) : s->title());
+    dw->setIcon(s->locked() ? Icons::get("lock")
+                : s->state() == SSHLX_STATE_DISCONNECTED ? Icons::get("disconnected")
+                                                         : s->protocolIcon());
+}
+
+QStringList DocumentArea::groupNames() const
+{
+    QStringList names;
+    for (SessionWidget *s : sessions())
+        if (!s->group().isEmpty() && !names.contains(s->group()))
+            names.append(s->group());
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+void DocumentArea::buildGroupMenu(const QList<SessionWidget *> &tabs, QMenu *menu)
+{
+    QList<QPointer<SessionWidget>> list;
+    for (SessionWidget *s : tabs)
+        list.append(s);
+    auto assign = [list](const QString &name) {
+        for (const QPointer<SessionWidget> &s : list)
+            if (s)
+                s->setGroup(name);
+    };
+    menu->addAction(tr("&New Group..."), this, [this, assign] {
+        bool ok = false;
+        const QString name = QInputDialog::getText(m_mgr->window(), tr("New Tab Group"),
+                                                   tr("Group name:"), QLineEdit::Normal,
+                                                   QString(), &ok).trimmed();
+        if (ok && !name.isEmpty())
+            assign(name);
+    });
+    const QStringList names = groupNames();
+    if (!names.isEmpty())
+        menu->addSeparator();
+    for (const QString &n : names)
+        menu->addAction(n, this, [assign, n] { assign(n); });
+    menu->addSeparator();
+    menu->addAction(tr("No Group"), this, [assign] { assign(QString()); });
 }
 
 QString DocumentArea::dockName(SessionWidget *s) const

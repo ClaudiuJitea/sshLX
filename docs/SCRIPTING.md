@@ -67,9 +67,32 @@ tab.wait_for("#")
 
 Errors raise `sshlx.SshlxError`.
 
-`wait_for` reads the output from the moment the script first touched the tab,
-and what comes before a match is used up, so a command's reply can't slip past
-between `send_line` and `wait_for`. Patterns are PCRE, as in Qt.
+`wait_for` looks at what arrived since the last send, so a command's reply
+can't slip past between `send_line` and `wait_for`, and an old prompt can't be
+mistaken for the new one. Before the first send it starts from the line the
+cursor is on, so a prompt already showing counts. Output up to a match is used
+up. Patterns are PCRE, as in Qt.
+
+## Recording
+
+**Tools → Record Script**, or Record Script in the terminal menu, writes down
+what you type as a script: each line waits for the prompt that was showing,
+then sends the line. Choose the same entry again to stop and save.
+
+A line typed at a password prompt is never written down. It becomes
+`tab.send_password()`, which uses the tab's credential when the script runs;
+add a credential's name if it needs a different one. This goes by what the
+prompt says, so a prompt that doesn't mention a password or passphrase is not
+recognised: check a recorded script before sharing it. Arrow keys are noted in
+a comment rather than recorded.
+
+## Logon scripts
+
+Right-click a connection or folder → **Logon Actions** runs a script after the
+logon steps, on each connect. There, `sshlx.current()` is the tab that logged
+in, whichever tab is in front. If a step fails, the script doesn't run.
+Importing a connection tree drops logon scripts, so that a file from elsewhere
+can't run programs on your machine.
 
 ## Security
 

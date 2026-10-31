@@ -55,6 +55,10 @@ public:
     QMap<QString, QString> properties;   // folder values: key id -> value
     QString credential;       // Credential id; empty: use the nearest folder's
     QList<LogonStep> logon;   // Run after connecting; empty: the nearest folder's
+    QString logonScript;      // A Python script run after them; same inheritance
+    QString buttonBar;        // Button bar shown on this tab; same inheritance
+    QString antiIdleText;     // Sent after antiIdleSeconds idle; same inheritance
+    int antiIdleSeconds = 0;
 
     ConnectionNode *parent = nullptr;
     QList<ConnectionNode *> children;
@@ -117,6 +121,9 @@ public:
     const Credential *resolveCredential(const ConnectionNode *n) const;
     // The logon actions a node uses: its own, or its nearest folder's.
     QList<LogonStep> resolveLogon(const ConnectionNode *n) const;
+    QString resolveLogonScript(const ConnectionNode *n) const;
+    QString resolveButtonBar(const ConnectionNode *n) const;
+    const ConnectionNode *resolveAntiIdle(const ConnectionNode *n) const;
     // Connections using the credential, directly or through a folder.
     QList<ConnectionNode *> linkedConnections(const QString &id) const;
     // Forget every direct link to the credential.

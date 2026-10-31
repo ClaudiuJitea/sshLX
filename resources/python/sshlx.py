@@ -115,11 +115,12 @@ class Tab:
         _call("send_password", tab=self.id, credential=credential)
 
     def wait_for(self, pattern, timeout=30, regex=False):
-        """Wait for text in the output that arrives from now on.
+        """Wait for text in the output.
 
-        Output is kept from the moment the script first touches this tab, so
-        text from a line just sent is not missed. Returns a Match, or None
-        after timeout seconds. Output up to the match is used up.
+        Looks at what arrived since the last send, or for a script that has
+        sent nothing yet, at the line the cursor was on and what came after
+        it. Returns a Match, or None after timeout seconds. Output up to the
+        match is used up.
         """
         found = _call("wait_for", tab=self.id, pattern=pattern, timeout=timeout, regex=regex)
         return Match(found) if found else None
@@ -157,7 +158,7 @@ def tabs():
 
 
 def current():
-    """The tab in use, or None."""
+    """The tab in use, or None. In a logon script, the tab that logged in."""
     info = _call("current")
     return Tab(info) if info else None
 

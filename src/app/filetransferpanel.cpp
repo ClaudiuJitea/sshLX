@@ -546,6 +546,12 @@ void FileTransferPanel::onReady()
         loadRemote(path);
         if (m_current < 0)
             startNext();
+        if (!m_pendingUploads.isEmpty()) {
+            const QStringList paths = m_pendingUploads;
+            m_pendingUploads.clear();
+            m_remoteDir = path;      // the listing that sets it is still on its way
+            uploadPaths(paths);
+        }
     });
 }
 
@@ -641,6 +647,14 @@ void FileTransferPanel::uploadSelected()
     if (paths.isEmpty())
         note(tr("Select something under This computer first."));
     uploadPaths(paths);
+}
+
+void FileTransferPanel::uploadWhenReady(const QStringList &paths)
+{
+    if (m_sftpReady)
+        uploadPaths(paths);
+    else
+        m_pendingUploads += paths;
 }
 
 void FileTransferPanel::uploadPaths(const QStringList &paths)

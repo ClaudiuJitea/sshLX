@@ -22,6 +22,8 @@ public:
     ConnectionNode *currentNode() const;
     ConnectionNode *currentFolder() const;   // selected folder or parent
     void select(ConnectionNode *n);
+    // What is selected, with folders replaced by the connections inside.
+    QList<ConnectionNode *> selectedConnections() const;
     void editName(ConnectionNode *n);
     QTreeView *view() const { return m_view; }
     ConnectionTreeModel *model() const { return m_model; }

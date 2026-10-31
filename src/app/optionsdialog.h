@@ -34,6 +34,7 @@ private:
     QCheckBox *m_restore, *m_reuseTab, *m_closeOnExit, *m_udev, *m_desktop, *m_keyring;
     QCheckBox *m_copyOnSelect, *m_confirmPaste, *m_zmodemAuto;
     QLineEdit *m_python;
+    class QSpinBox *m_rotateMB, *m_rotateHours, *m_rotateKeep;
     class QComboBox *m_rightClick;
     QListWidget *m_keywordList;
     QCheckBox *m_keywordsOn;

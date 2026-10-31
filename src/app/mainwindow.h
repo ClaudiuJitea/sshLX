@@ -17,7 +17,9 @@ class SerialManager;
 class QToolBar;
 class QDockWidget;
 class ButtonBar;
+class CommandManager;
 class CommandWindow;
+class SessionsManager;
 class ScriptHost;
 class TftpDialog;
 class TftpServer;
@@ -61,6 +63,21 @@ public:
     void globalEvent(sshlx_global_event ev, const QString &text);
     QList<SessionWidget *> sessions() const;
     CommandWindow *commandWindow() const { return m_command; }
+    SessionsManager *sessionsManager() const { return m_sessionsPanel; }
+    CommandManager *commandManager() const { return m_commandManager; }
+    // Starts recording the current tab, or stops and asks where to save.
+    void toggleRecording(SessionWidget *s);
+    // A saved connection's name, or a host, user@host:port, ssh:// or telnet://.
+    // A name is looked up only for typed text: a link from elsewhere must not
+    // reach a connection with saved logins. nullptr with *error set.
+    SessionWidget *connectTo(const QString &text, bool typed, QString *error);
+    // Lets later "sshLX ssh://host" commands open their tab in this window.
+    void listenForInstances(const QString &socketName);
+    static QString instanceSocket();
+    // Sends a target to a running sshLX. False if none answers.
+    static bool sendToRunningInstance(const QString &socketName, const QString &target);
+    QString statusText() const;
+    QWidget *scratchpad() const;
     ButtonBar *buttonBar() const { return m_buttonBar; }
     ScriptHost *scripts() const { return m_scripts; }
     TftpServer *tftpServer() const { return m_tftp; }
@@ -117,6 +134,9 @@ private:
     QString workspacePath(const QString &name) const;
     void runScriptFile();
     void rebuildScriptMenu();
+    void applyTabButtonBar(SessionWidget *s);
+    void updateStatus();
+    void runMacroByName(const QString &name);
 
     DocumentArea *m_docs;
     ConnectionStore *m_store;
@@ -138,6 +158,14 @@ private:
     QMenu *m_scriptMenu = nullptr;
     QDockWidget *m_commandDock = nullptr;
     CommandWindow *m_command = nullptr;
+    QDockWidget *m_sessionsDock = nullptr, *m_commandsDock = nullptr;
+    SessionsManager *m_sessionsPanel = nullptr;
+    CommandManager *m_commandManager = nullptr;
+    QLabel *m_recordLabel = nullptr;
+    QLabel *m_statusLabel = nullptr;
+    ads::CDockWidget *m_scratchDock = nullptr;
+    QToolBar *m_quickBar = nullptr;
+    class QLocalServer *m_instanceServer = nullptr;
     ButtonBar *m_buttonBar = nullptr;
     ScriptHost *m_scripts = nullptr;
     TftpServer *m_tftp = nullptr;

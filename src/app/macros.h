@@ -22,6 +22,7 @@ struct Macro {
     QString text;
     QString folder;     // "Cisco/Show", or empty for the top level
     QString script;     // a Python script to run instead of text
+    QString bar;        // the button bar it is on; empty: the default bar
 };
 
 QList<Macro> loadMacros();
@@ -44,10 +45,20 @@ class ButtonBar : public QToolBar {
 public:
     explicit ButtonBar(QWidget *parent = nullptr);
     void rebuild();
+    // Every bar name, the default one ("") first.
+    static QStringList barNames();
+    QString shownBar() const { return m_forced.isNull() ? m_chosen : m_forced; }
+    // What the user picked from the list.
+    void setChosenBar(const QString &name);
+    // A connection's own bar for its tab; null: back to the user's pick.
+    void setForcedBar(const QString &name);
 signals:
     // onTargets: run on the Command Window's tabs rather than the current one.
     void macroTriggered(const Macro &macro, bool onTargets);
     void manageRequested();
+
+private:
+    QString m_chosen, m_forced;
 };
 
 class MacroDialog : public QDialog {
@@ -64,7 +75,7 @@ private:
     QListWidget *m_list;
     QLineEdit *m_name;
     QPlainTextEdit *m_text;
-    QComboBox *m_folder, *m_kind;
+    QComboBox *m_folder, *m_kind, *m_bar;
     QLineEdit *m_script;
     QPushButton *m_browse;
     void updateKind();

@@ -1,5 +1,7 @@
 #include "connectionspanel.h"
+#include "bulkeditdialog.h"
 #include "logondialog.h"
+#include "macros.h"
 #include "dialogkit.h"
 #include "icons.h"
 
@@ -235,6 +237,25 @@ void ConnectionsPanel::editName(ConnectionNode *n)
     m_view->edit(m_view->currentIndex());
 }
 
+QList<ConnectionNode *> ConnectionsPanel::selectedConnections() const
+{
+    QList<ConnectionNode *> out;
+    const std::function<void(ConnectionNode *)> add = [&](ConnectionNode *n) {
+        if (n->isFolder()) {
+            for (ConnectionNode *c : n->children)
+                add(c);
+        } else if (!out.contains(n)) {
+            out.append(n);
+        }
+    };
+    for (const QModelIndex &pi : m_view->selectionModel()->selectedRows()) {
+        const QModelIndex s = toSource(pi);
+        if (ConnectionNode *n = m_model->node(s))
+            add(n);
+    }
+    return out;
+}
+
 void ConnectionsPanel::newConnection()
 {
     ConnectionNode *parent = currentFolder();
@@ -358,11 +379,39 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
     if (n) {
         menu.addAction(Icons::get("script"), tr("&Logon Actions..."), this, [this, n] {
             LogonDialog dlg(n->logon, m_store->tree().credentials(), n->isFolder(), this);
+            dlg.setScript(n->logonScript);
+            dlg.setAntiIdle(n->antiIdleText, n->antiIdleSeconds);
             if (dlg.exec() == QDialog::Accepted) {
                 n->logon = dlg.steps();
+                n->logonScript = dlg.script();
+                n->antiIdleText = dlg.antiIdleText();
+                n->antiIdleSeconds = dlg.antiIdleSeconds();
                 m_store->touch(n);
             }
         });
+        QMenu *bars = menu.addMenu(tr("&Button Bar"));
+        const auto setBar = [this, n](const QString &name) {
+            n->buttonBar = name;
+            m_store->touch(n);
+        };
+        QAction *none = bars->addAction(tr("(as chosen, or the folder's)"), this, [setBar] { setBar(QString()); });
+        none->setCheckable(true);
+        none->setChecked(n->buttonBar.isEmpty());
+        const QStringList names = ButtonBar::barNames();
+        for (const QString &b : names) {
+            if (b.isEmpty())
+                continue;
+            QAction *a = bars->addAction(b, this, [setBar, b] { setBar(b); });
+            a->setCheckable(true);
+            a->setChecked(n->buttonBar == b);
+        }
+        const QList<ConnectionNode *> many = selectedConnections();
+        if (many.size() > 1)
+            menu.addAction(Icons::get("settings"), tr("&Edit %n Connection(s)...", nullptr, int(many.size())),
+                           this, [this, many] {
+                BulkEditDialog dlg(m_store, many, this);
+                dlg.exec();
+            });
         menu.addAction(tr("&Rename"), this, [this, n] { editName(n); });
         menu.addAction(Icons::get("close"), tr("&Delete"), this, &ConnectionsPanel::deleteSelected);
         menu.addSeparator();

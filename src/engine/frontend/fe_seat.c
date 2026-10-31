@@ -199,6 +199,11 @@ static size_t sshlx_seat_output(Seat *seat, SeatOutputType type,
             UI_CALL(s, output_data, data, len);
         return 0;
     }
+    if (s->raw_output && type == SEAT_OUTPUT_STDERR && s->cb.stderr_data) {
+        if (!s->dead)
+            UI_CALL(s, stderr_data, data, len);
+        return 0;
+    }
     size_t backlog = term_data(s->term, data, len);
     if (s->cb.output_data && !s->dead && !s->raw_output)
         UI_CALL(s, output_data, data, len);

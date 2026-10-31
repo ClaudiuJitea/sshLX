@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QLineEdit>
+#include <QSpinBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -182,9 +183,31 @@ OptionsDialog::OptionsDialog(MainWindow *main) : QDialog(main), m_main(main)
     more->setSpacing(10);
     more->addWidget(withHint(m_zmodemAuto, tr("Nothing is received or sent until you accept.")));
     more->addLayout(pyForm);
+    auto spin = [&st](const char *key, int dflt, int max, const QString &off) {
+        auto *b = new QSpinBox;
+        b->setRange(0, max);
+        b->setValue(st.value(key, dflt).toInt());
+        b->setSpecialValueText(off);
+        return b;
+    };
+    m_rotateMB = spin("logging/rotateMB", 0, 1000000, tr("Off"));
+    m_rotateMB->setSuffix(tr(" MB"));
+    m_rotateHours = spin("logging/rotateHours", 0, 100000, tr("Off"));
+    m_rotateHours->setSuffix(tr(" hours"));
+    m_rotateKeep = spin("logging/keep", 5, 100000, tr("All"));
+    auto *logForm = form();
+    logForm->addRow(tr("Rotate at size"), m_rotateMB);
+    logForm->addRow(tr("Rotate after"), m_rotateHours);
+    logForm->addRow(tr("Old logs to keep"), m_rotateKeep);
+    auto *logs = new QVBoxLayout;
+    logs->setSpacing(10);
+    logs->addLayout(logForm);
+    logs->addWidget(hint(tr("For connections with a session log. The current log gets the date and "
+                            "time added to its name, and a new one starts.")));
     addPage("terminal", tr("Terminal"),
             page(tr("Terminal"), tr("Mouse, copy and paste"),
-                 {card(tr("Mouse"), mouse), card(tr("Transfers and scripts"), more)}));
+                 {card(tr("Mouse"), mouse), card(tr("Transfers and scripts"), more),
+                  card(tr("Session logs"), logs)}, true));
 
     addPage("palette", tr("Highlighting"), buildHighlighting());
 
@@ -452,6 +475,9 @@ void OptionsDialog::apply()
     st.setValue("behaviour/closeTabOnExit", m_closeOnExit->isChecked());
     st.setValue("behaviour/reuseTab", m_reuseTab->isChecked());
     st.setValue("transfers/zmodemAuto", m_zmodemAuto->isChecked());
+    st.setValue("logging/rotateMB", m_rotateMB->value());
+    st.setValue("logging/rotateHours", m_rotateHours->value());
+    st.setValue("logging/keep", m_rotateKeep->value());
     st.setValue("scripts/python", m_python->text().trimmed().isEmpty() ? QStringLiteral("python3")
                                                                        : m_python->text().trimmed());
     st.setValue("terminal/copyOnSelect", m_copyOnSelect->isChecked());

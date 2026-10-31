@@ -2,6 +2,7 @@
 // view, scrollbar, in-tab prompt bar and reconnect bar.
 #pragma once
 
+#include <QDateTime>
 #include <QIcon>
 #include <QPointer>
 #include <QString>
@@ -20,13 +21,17 @@ class FindBar;
 class QScrollBar;
 class QLabel;
 class QPushButton;
+class QDialog;
 class QFrame;
 class QHBoxLayout;
 class QMenu;
 class EventLogDialog;
 class LogonRunner;
+class ScriptRecorder;
+struct KeyBinding;
 class ModemTransfer;
 class QProgressBar;
+class QTimer;
 struct LogonStep;
 
 class SessionWidget : public QWidget {
@@ -100,6 +105,26 @@ public:
     void runMacro(const QString &text);
     // For several tabs at once, so without Paste Configuration's review dialog.
     bool canSendCommands() const;
+    // Locked tabs take no typing, paste, command, macro or script.
+    bool locked() const { return m_locked; }
+    void setLocked(bool on);
+    QString group() const { return m_group; }
+    void setGroup(const QString &name);
+    // Live typing: the tabs that also get what is typed in this one.
+    using Mirror = std::function<QList<SessionWidget *>(SessionWidget *source)>;
+    static void setMirror(Mirror f);
+    // Script recording in this tab; stop returns the script.
+    void startRecording();
+    QString stopRecording();
+    bool recording() const { return m_recorder != nullptr; }
+    // Session log, when the connection has one.
+    bool logEnabled() const;
+    bool logPaused() const { return m_logPaused; }
+    void setLogPaused(bool paused);
+    bool rotateLog();
+    QString logPath() const { return m_logPath; }
+    using ScriptPath = std::function<QString()>;
+    void setLogonScript(ScriptPath f) { m_logonScript = std::move(f); }
     void sendCommand(const QString &line);
     void sendCommands(const QStringList &lines);
     // Types text as given, for scripts.
@@ -107,7 +132,7 @@ public:
     // Xmodem, Ymodem and Zmodem through the terminal. The remote side must
     // be started first (sz, rz, xmodem...), except that sendModem types "rz"
     // for Zmodem. Both return false when something else is using the tab.
-    bool sendModem(int protocol, const QStringList &files);
+    bool sendModem(int protocol, const QStringList &files, bool resume = false);
     bool receiveModem(int protocol, const QString &directory, const QString &saveAs = QString());
     bool transferRunning() const;
     // Run after each connect: the connection's logon actions, resolved then
@@ -122,6 +147,7 @@ public:
     void sendPasswordQuietly(const QString &credentialId,
                              std::function<void(bool ok, const QString &error)> done);
     bool atPasswordPrompt() const;
+    QString cursorLine() const;
     QString allTextForScripts() { return allText(); }
     // Add Keyword: starts from the selected text.
     void addKeyword();
@@ -148,6 +174,26 @@ public:
     static void reloadMousePrefs();
     // The keyword list or its on/off switch changed: repaint every tab.
     static void reloadHighlights();
+    // A word marked in every tab until cleared, not saved anywhere.
+    static void setAdHocHighlight(const QString &text);
+    // What a status line shows.
+    struct Status {
+        QString protocol, cipherOut, cipherIn;
+        qint64 received = 0;
+        qint64 connectedSecs = -1;      // -1: not connected
+        int cols = 0, rows = 0;
+    };
+    Status status() const;
+    void showHexView();
+    QDialog *hexViewForTests() const;
+    void sendAsciiFile(const QString &path, int lineDelayMs, int charDelayMs);
+    bool sendingAscii() const;
+    // The dropped-file question.
+    void handleDroppedFiles(const QStringList &paths);
+    // Text sent after this many idle seconds; 0: none. Resolved at each connect.
+    struct AntiIdle { QString text; int seconds = 0; };
+    using AntiIdleSource = std::function<AntiIdle()>;
+    void setAntiIdle(AntiIdleSource f) { m_antiIdleSource = std::move(f); }
 
     static QIcon iconForProtocol(int proto);
     // A back end's PuTTY protocol number from its id ("serial", "localshell"...).
@@ -164,6 +210,11 @@ signals:
     void identityChanged();
     void fileTransferRequested();
     void scriptRequested(const QString &path);
+    void macroRequested(const QString &name);
+    void logonScriptRequested(const QString &path);
+    void recordToggleRequested();
+    void lockChanged(bool locked);
+    void sftpUploadRequested(const QStringList &paths);
     // Everything received, for scripts. Not connected: no copy is made.
     void outputReceived(const QByteArray &data);
     // Appearance menu: keep this tab's look for its connection, or for
@@ -197,6 +248,14 @@ private:
     void beginModem();
     void offerZmodem(bool receiving);
     void runLogonPassword(const QString &credential);
+    void mirrorKey(const sshlx_key_event *ev, int qtKey);
+    void mirrorText(const QString &text);
+    void runKeyBinding(const KeyBinding &b);
+    void afterLogon();
+    void noteInput();
+    void askAsciiFile();
+    void checkLogRotation();
+    QString expandedLogPath(const QDateTime &when) const;
 
     sshlx_session *m_session = nullptr;
     QString m_customTitle, m_serverTitle;
@@ -218,6 +277,20 @@ private:
     CredentialAccount m_credentialAccount;
     QByteArray m_zTail;              // the end of the last output, for a split header
     bool m_zOffered = false;
+    bool m_locked = false, m_logPaused = false;
+    QString m_group, m_logPath;
+    QDateTime m_logOpened;
+    QTimer *m_logTimer;
+    ScriptRecorder *m_recorder = nullptr;
+    ScriptPath m_logonScript;
+    class AsciiSender *m_ascii;
+    AntiIdleSource m_antiIdleSource;
+    AntiIdle m_antiIdle;
+    QTimer *m_idleTimer;
+    QString m_cipherOut, m_cipherIn;
+    qint64 m_received = 0;
+    QDateTime m_connectedAt;
+    QPointer<class HexViewDialog> m_hexView;
     struct FindMatch { int row, start, len; };
     QStringList m_findRows;       // every row of the buffer, oldest first
     QList<FindMatch> m_matches;

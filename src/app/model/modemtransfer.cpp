@@ -23,7 +23,7 @@ enum {
     ZCOMPL = 15, ZCAN = 16, ZFREECNT = 17, ZCOMMAND = 18, ZSTDERR = 19
 };
 constexpr uchar CANFDX = 1, CANOVIO = 2, CANFC32 = 32, ESCCTL = 64;
-constexpr uchar ZCBIN = 1;
+constexpr uchar ZCBIN = 1, ZCRESUM = 3;
 constexpr int kZBlock = 1024;
 constexpr size_t kBacklogLimit = 16 * 1024;
 
@@ -113,6 +113,7 @@ QString ModemTransfer::protocolName(Protocol p)
     case Protocol::Xmodem1k: return QStringLiteral("Xmodem-1K");
     case Protocol::Ymodem: return QStringLiteral("Ymodem");
     case Protocol::Zmodem: return QStringLiteral("Zmodem");
+    case Protocol::Kermit: return QStringLiteral("Kermit");
     }
     return {};
 }
@@ -163,13 +164,14 @@ int ModemTransfer::findZmodemStart(const QByteArray &data, bool *receiving)
     }
 }
 
-void ModemTransfer::startSend(Protocol p, const QStringList &files)
+void ModemTransfer::startSend(Protocol p, const QStringList &files, bool resume)
 {
     if (m_running || files.isEmpty())
         return;
     m_protocol = p;
     m_sending = true;
     m_running = true;
+    m_zResume = resume;
     m_files = files;
     m_totalFiles = files.size();
     m_filesDone = 0;
@@ -180,6 +182,10 @@ void ModemTransfer::startSend(Protocol p, const QStringList &files)
     m_zp = ZParse::Hunt;
     if (p == Protocol::Zmodem) {
         zStartSend();
+        return;
+    }
+    if (p == Protocol::Kermit) {
+        kStart();
         return;
     }
     if (p != Protocol::Ymodem && files.size() > 1) {
@@ -209,6 +215,12 @@ void ModemTransfer::startReceive(Protocol p, const QString &directory, const QSt
     m_zp = ZParse::Hunt;
     if (p == Protocol::Zmodem) {
         zStartReceive();
+        return;
+    }
+    if (p == Protocol::Kermit) {
+        m_position = 0;
+        m_fileSize = -1;
+        kStart();
         return;
     }
     m_crc = true;
@@ -293,6 +305,8 @@ void ModemTransfer::process()
         return;
     if (m_protocol == Protocol::Zmodem)
         zProcess();
+    else if (m_protocol == Protocol::Kermit)
+        kProcess();
     else
         xProcess();
 }
@@ -319,7 +333,7 @@ bool ModemTransfer::openNextSendFile()
     return true;
 }
 
-bool ModemTransfer::openReceiveFile(const QString &name, qint64 size)
+bool ModemTransfer::openReceiveFile(const QString &name, qint64 size, qint64 resumeAt)
 {
     const QString safe = safeFileName(name);
     if (safe.isEmpty()) {
@@ -328,17 +342,22 @@ bool ModemTransfer::openReceiveFile(const QString &name, qint64 size)
     }
     m_fileName = safe;
     m_finalPath = uniquePath(m_directory, safe);
-    m_partPath = m_finalPath + QStringLiteral(".part");
-    m_partPath = uniquePath(m_directory, QFileInfo(m_partPath).fileName());
+    m_partPath = QDir(m_directory).filePath(safe + QStringLiteral(".part"));
+    // Zmodem's part files stay for a resume. Anyone else's name is left alone.
+    if (m_protocol != Protocol::Zmodem || QFileInfo(m_partPath).isSymLink())
+        m_partPath = uniquePath(m_directory, safe + QStringLiteral(".part"));
     m_file = std::make_unique<QFile>(m_partPath);
-    if (!m_file->open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+    const QIODevice::OpenMode mode = resumeAt > 0 ? QIODevice::WriteOnly | QIODevice::Append
+        : m_protocol == Protocol::Zmodem ? QIODevice::WriteOnly | QIODevice::Truncate
+                                         : QIODevice::WriteOnly | QIODevice::NewOnly;
+    if (!m_file->open(mode)) {
         const QString err = m_file->errorString();
         m_partPath.clear();
         fail(tr("Could not create %1: %2").arg(m_finalPath, err));
         return false;
     }
     m_fileSize = size;
-    m_position = 0;
+    m_position = resumeAt;
     reportProgress();
     return true;
 }
@@ -363,6 +382,13 @@ bool ModemTransfer::finishReceiveFile()
 
 void ModemTransfer::discardReceiveFile()
 {
+    // What arrived of an interrupted Zmodem file is worth keeping.
+    if (m_protocol == Protocol::Zmodem && m_file && !m_partPath.isEmpty() && m_position > 0) {
+        m_file->close();
+        m_file.reset();
+        m_partPath.clear();
+        return;
+    }
     if (m_file && !m_partPath.isEmpty()) {
         m_file->close();
         m_file.reset();
@@ -379,6 +405,10 @@ void ModemTransfer::onTimeout()
         return;
     if (++m_retries > kMaxRetries) {
         fail(tr("The other end stopped answering."));
+        return;
+    }
+    if (m_protocol == Protocol::Kermit) {
+        kTimeout();
         return;
     }
     if (m_protocol != Protocol::Zmodem) {
@@ -437,6 +467,13 @@ void ModemTransfer::onTimeout()
     case Phase::ZRecvFileInfo:
         zSendHexPos(ZRPOS, quint32(m_position));
         m_zp = ZParse::Hunt;
+        break;
+    case Phase::ZRecvResumeCheck:
+        // A sender with no answer gets the file from the start.
+        if (!openReceiveFile(m_zResumeName, m_zResumeSize))
+            return;
+        m_phase = Phase::ZRecvData;
+        zSendHexPos(ZRPOS, 0);
         break;
     default:
         break;
@@ -1111,7 +1148,8 @@ void ModemTransfer::zStartSend()
 
 void ModemTransfer::zSendFileHeader()
 {
-    const uchar d[4] = {0, 0, 0, ZCBIN};    // ZF0 is d[3]: binary, as is
+    // ZF0 is d[3]: binary as is, or carry on after what the receiver holds.
+    const uchar d[4] = {0, 0, 0, uchar(m_zResume ? ZCRESUM : ZCBIN)};
     zSendBin(ZFILE, d);
     qint64 left = 0;
     for (const QString &f : std::as_const(m_files))
@@ -1257,6 +1295,28 @@ void ModemTransfer::zHandleHeader(const ZHeader &h)
         case ZNAK:
             onTimeout();
             break;
+        case ZCRC: {
+            // The receiver asks whether what it holds is the start of this file.
+            if (!m_file)
+                break;
+            const qint64 was = m_file->pos();
+            m_file->seek(0);
+            quint32 crc = 0xffffffffu;
+            qint64 left = h.position() ? qint64(h.position()) : m_file->size();
+            while (left > 0) {
+                const QByteArray b = m_file->read(qMin<qint64>(left, 65536));
+                if (b.isEmpty())
+                    break;
+                crc = crc32Update(crc, b.constData(), int(b.size()));
+                left -= b.size();
+            }
+            m_file->seek(was);
+            uchar d[4];
+            putPosition(d, ~crc);
+            zSendBin(ZCRC, d);
+            armTimeout();
+            break;
+        }
         case ZFIN:
             if (m_phase == Phase::ZSendFin) {
                 out(QByteArrayLiteral("OO"));
@@ -1323,9 +1383,31 @@ void ModemTransfer::zHandleHeader(const ZHeader &h)
         succeed(tr("%n file(s) received.", nullptr, int(m_filesDone)));
         break;
     }
+    case ZCRC:
+        if (m_phase == Phase::ZRecvResumeCheck) {
+            QFile part(QDir(m_directory).filePath(safeFileName(m_zResumeName) + QStringLiteral(".part")));
+            quint32 crc = 0xffffffffu;
+            if (part.open(QIODevice::ReadOnly)) {
+                qint64 left = m_zResumeAt;
+                while (left > 0) {
+                    const QByteArray b = part.read(qMin<qint64>(left, 65536));
+                    if (b.isEmpty())
+                        break;
+                    crc = crc32Update(crc, b.constData(), int(b.size()));
+                    left -= b.size();
+                }
+            }
+            const qint64 from = ~crc == h.position() ? m_zResumeAt : 0;
+            if (!openReceiveFile(m_zResumeName, m_zResumeSize, from))
+                return;
+            m_phase = Phase::ZRecvData;
+            zSendHexPos(ZRPOS, quint32(from));
+            armTimeout();
+            break;
+        }
+        [[fallthrough]];
     case ZCOMMAND:
     case ZFREECNT:
-    case ZCRC:
     case ZCHALLENGE:
         // A remote must never run commands here: ZCOMMAND is how "sz -c"
         // does that. None of these is needed to receive a file.
@@ -1358,6 +1440,19 @@ void ModemTransfer::zHandleSubpacket(const QByteArray &data, uchar end)
             const qint64 v = data.mid(zero + 1).split(' ').value(0).toLongLong(&ok);
             if (ok && v >= 0)
                 size = v;
+        }
+        // A part from an earlier try that this file could continue.
+        const QFileInfo part(QDir(m_directory).filePath(safeFileName(QString::fromUtf8(name))
+                                                        + QStringLiteral(".part")));
+        if (part.isFile() && !part.isSymLink() && part.size() > 0
+            && (size < 0 || part.size() < size) && part.size() < 0x7fffffff) {
+            m_zResumeName = QString::fromUtf8(name);
+            m_zResumeSize = size;
+            m_zResumeAt = part.size();
+            m_phase = Phase::ZRecvResumeCheck;
+            zSendHexPos(ZCRC, quint32(m_zResumeAt));
+            armTimeout();
+            break;
         }
         if (!openReceiveFile(QString::fromUtf8(name), size))
             return;

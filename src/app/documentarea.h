@@ -39,6 +39,9 @@ public:
     // The session part of a tab's right-click menu (reconnect, appearance,
     // split...); ADS adds Detach and Close below it.
     void buildTabMenu(SessionWidget *s, QMenu *menu);
+    // Tab groups: assign the tabs to a group, new or existing, or to none.
+    void buildGroupMenu(const QList<SessionWidget *> &tabs, QMenu *menu);
+    QStringList groupNames() const;
     void nextTab(int direction);
     void updateTab(SessionWidget *s);
     QString dockName(SessionWidget *s) const;

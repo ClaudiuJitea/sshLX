@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(sshLX VERSION 0.7.3
+project(sshLX VERSION 0.7.7
   DESCRIPTION "Tabbed, session-managed terminal client built on the PuTTY core"
   LANGUAGES C CXX)
 

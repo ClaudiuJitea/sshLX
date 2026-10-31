@@ -188,6 +188,20 @@ void sshlx_session_send_bytes(sshlx_session *s, const char *data, size_t len)
     sshlx_after_entry();
 }
 
+void sshlx_session_log_set_paused(sshlx_session *s, bool paused)
+{
+    if (s->dead || !s->logctx)
+        return;
+    Conf *c = conf_copy(s->conf);
+    if (paused)
+        conf_set_int(c, CONF_logtype, LGTYP_NONE);
+    else
+        conf_set_int(c, CONF_logxfovr, LGXF_APN);
+    log_reconfig(s->logctx, c);
+    conf_free(c);
+    sshlx_after_entry();
+}
+
 bool sshlx_session_send_ready(sshlx_session *s)
 {
     return !s->dead && s->backend && backend_sendok(s->backend);

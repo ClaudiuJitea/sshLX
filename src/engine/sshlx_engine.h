@@ -305,6 +305,8 @@ typedef struct sshlx_session_callbacks {
     /* Bytes received from the remote side, after the terminal has had them
      * (may be NULL). Do not send from inside this. */
     void (*output_data)(void *ctx, const char *data, size_t len);
+    /* Raw mode only, may be NULL: the remote's stderr, instead of the terminal. */
+    void (*stderr_data)(void *ctx, const char *data, size_t len);
 
     /* Clipboard. utf8 is the selection; must_deselect as in PuTTY. */
     void (*clip_write)(void *ctx, int clipboard, const char *utf8,
@@ -416,6 +418,9 @@ size_t sshlx_session_send_backlog(sshlx_session *s);
 /* True once the remote command or subsystem has really started. CONNECTED
  * comes earlier, and bytes sent in between reach the server too soon. */
 bool sshlx_session_send_ready(sshlx_session *s);
+/* Closes the session log, or opens it again, appending to the same file. The
+ * session's Conf is left alone. */
+void sshlx_session_log_set_paused(sshlx_session *s, bool paused);
 void sshlx_session_preedit(sshlx_session *s, const char *utf8_or_null);
 /* Send raw bytes to the backend as if typed (e.g. "send command"). */
 void sshlx_session_send_raw(sshlx_session *s, const char *data, size_t len);

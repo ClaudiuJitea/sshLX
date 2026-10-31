@@ -15,6 +15,11 @@ public:
                 QWidget *parent);
     QList<LogonStep> steps() const;
     QTableWidget *table() const { return m_table; }
+    QString script() const;
+    void setScript(const QString &path);
+    QString antiIdleText() const;
+    int antiIdleSeconds() const;
+    void setAntiIdle(const QString &text, int seconds);
     void addStep(const LogonStep &step);
 
 private:
@@ -22,4 +27,6 @@ private:
 
     QList<Credential> m_credentials;
     QTableWidget *m_table;
+    class QLineEdit *m_script, *m_idleText;
+    class QSpinBox *m_idleSeconds;
 };

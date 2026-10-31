@@ -1,5 +1,14 @@
 #include "terminalview.h"
 
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileInfo>
+#include <QMimeData>
+#include <QTimer>
+#include <QUrl>
+
+#include "keybindings.h"
+
 #include <QApplication>
 #include <QFontMetricsF>
 #include <QIcon>
@@ -24,6 +33,7 @@ TerminalView::TerminalView(QWidget *parent) : QWidget(parent)
     setAttribute(Qt::WA_InputMethodEnabled);
     setAttribute(Qt::WA_KeyCompression, false);
     setFocusPolicy(Qt::StrongFocus);
+    setAcceptDrops(true);
     setMouseTracking(true);
     setCursor(Qt::IBeamCursor);
     setFonts(TerminalFonts{"client:Monospace 12", "", "", "", false, 1, 1});
@@ -524,7 +534,7 @@ bool TerminalView::event(QEvent *e)
         auto *ke = static_cast<QKeyEvent *>(e);
         // The terminal gets every key except the configured application
         // shortcuts, unless "send next shortcut to terminal" is armed.
-        if (Shortcuts::instance().terminalShouldTake(ke)) {
+        if (KeyBindings::find(ke) || Shortcuts::instance().terminalShouldTake(ke)) {
             e->accept();
             return true;
         }
@@ -538,6 +548,24 @@ bool TerminalView::event(QEvent *e)
     return QWidget::event(e);
 }
 
+void TerminalView::dragEnterEvent(QDragEnterEvent *e)
+{
+    if (e->mimeData()->hasUrls() && !m_locked && !m_inputBlocked)
+        e->acceptProposedAction();
+}
+
+void TerminalView::dropEvent(QDropEvent *e)
+{
+    QStringList paths;
+    for (const QUrl &u : e->mimeData()->urls())
+        if (u.isLocalFile() && QFileInfo(u.toLocalFile()).isFile())
+            paths.append(u.toLocalFile());
+    e->acceptProposedAction();
+    if (!paths.isEmpty())
+        // Not from here: the question it asks would hold the drag open.
+        QTimer::singleShot(0, this, [this, paths] { emit filesDropped(paths); });
+}
+
 void TerminalView::keyPressEvent(QKeyEvent *e)
 {
     if (!m_session)
@@ -549,7 +577,13 @@ void TerminalView::keyPressEvent(QKeyEvent *e)
         e->accept();
         return;
     }
-    if (m_inputBlocked) {
+    if (m_inputBlocked || m_locked) {
+        e->accept();
+        return;
+    }
+    if (const KeyBinding *b = KeyBindings::find(e)) {
+        const KeyBinding copy = *b;
+        emit keyBound(copy);
         e->accept();
         return;
     }
@@ -562,7 +596,7 @@ void TerminalView::keyPressEvent(QKeyEvent *e)
     switch (sshlx_session_key(m_session, &ev)) {
     case SSHLX_KEY_FONT_BIGGER: emit fontSizeStep(+1); break;
     case SSHLX_KEY_FONT_SMALLER: emit fontSizeStep(-1); break;
-    default: break;
+    default: emit keySent(&ev, e->key()); break;
     }
     e->accept();
 }
@@ -583,8 +617,14 @@ void TerminalView::inputMethodEvent(QInputMethodEvent *e)
 {
     if (!m_session)
         return;
-    if (!e->commitString().isEmpty())
+    if (m_inputBlocked || m_locked) {
+        e->accept();
+        return;
+    }
+    if (!e->commitString().isEmpty()) {
         sshlx_session_text(m_session, e->commitString().toUtf8().constData());
+        emit textSent(e->commitString());
+    }
     if (!e->preeditString().isEmpty())
         sshlx_session_preedit(m_session, e->preeditString().toUtf8().constData());
     else

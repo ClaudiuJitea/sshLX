@@ -36,7 +36,8 @@ public:
     explicit ScriptHost(MainWindow *window);
     ~ScriptHost() override;
 
-    bool run(const QString &path, const QStringList &args = {});
+    // tab: what sshlx.current() means to the script, instead of the tab in use.
+    bool run(const QString &path, const QStringList &args = {}, SessionWidget *tab = nullptr);
     void stopAll();
     int runningCount() const { return int(m_runs.size()); }
     QString consoleText() const;

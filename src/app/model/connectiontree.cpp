@@ -252,6 +252,30 @@ QList<LogonStep> ConnectionTree::resolveLogon(const ConnectionNode *n) const
     return {};
 }
 
+QString ConnectionTree::resolveLogonScript(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (!n->logonScript.isEmpty())
+            return n->logonScript;
+    return {};
+}
+
+const ConnectionNode *ConnectionTree::resolveAntiIdle(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (n->antiIdleSeconds > 0 && !n->antiIdleText.isEmpty())
+            return n;
+    return nullptr;
+}
+
+QString ConnectionTree::resolveButtonBar(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (!n->buttonBar.isEmpty())
+            return n->buttonBar;
+    return {};
+}
+
 // ---- JSON --------------------------------------------------------------------
 static QJsonObject nodeToJson(const ConnectionNode *n)
 {
@@ -262,6 +286,12 @@ static QJsonObject nodeToJson(const ConnectionNode *n)
     if (!n->description.isEmpty()) o["description"] = n->description;
     if (!n->icon.isEmpty()) o["icon"] = n->icon;
     if (!n->credential.isEmpty()) o["credential"] = n->credential;
+    if (!n->logonScript.isEmpty()) o["logonScript"] = n->logonScript;
+    if (!n->buttonBar.isEmpty()) o["buttonBar"] = n->buttonBar;
+    if (n->antiIdleSeconds > 0) {
+        o["antiIdleText"] = n->antiIdleText;
+        o["antiIdleSeconds"] = n->antiIdleSeconds;
+    }
     if (!n->logon.isEmpty()) {
         QJsonArray steps;
         for (const LogonStep &s : n->logon) {
@@ -311,6 +341,10 @@ static ConnectionNode *nodeFromJson(const QJsonObject &o, QString *error)
     n->description = o["description"].toString();
     n->icon = o["icon"].toString();
     n->credential = o["credential"].toString();
+    n->logonScript = o["logonScript"].toString();
+    n->buttonBar = o["buttonBar"].toString();
+    n->antiIdleText = o["antiIdleText"].toString();
+    n->antiIdleSeconds = o["antiIdleSeconds"].toInt();
     for (const QJsonValue &v : o["logon"].toArray()) {
         const QJsonObject e = v.toObject();
         n->logon.append({e["wait"].toString(), e["regex"].toBool(), e["send"].toString(),

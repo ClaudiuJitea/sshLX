@@ -21,7 +21,7 @@
  * returns early once the port is closed, instead of reaching uxsel_set()
  * with fd -1 (an assertion failure) from a late unthrottle.
  *
- * See sshLX/PUTTY-OVERRIDES.md and sshLX/docs/overrides/unix-serial.c.diff.
+ * See sshLX/docs/PUTTY-OVERRIDES.md and sshLX/docs/overrides/unix-serial.c.diff.
  */
 /*
  * Serial back end (Unix-specific).

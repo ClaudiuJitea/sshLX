@@ -1,11 +1,22 @@
 #include "terminallook.h"
 
+#include <QColor>
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QStandardPaths>
+
 #include <QPainter>
 #include <QPixmap>
 
 namespace TerminalLook {
 
-const QList<Scheme> &schemes()
+static const QList<Scheme> &builtInSchemes()
 {
     // ANSI: black, red, green, yellow, blue, magenta, cyan, white; then the
     // same eight bright.
@@ -56,6 +67,145 @@ const QList<Scheme> &schemes()
     return list;
 }
 
+static QString schemesFile()
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/colour-schemes.json";
+}
+
+static QJsonObject toJson(const Scheme &s)
+{
+    const auto hex = [](QRgb c) { return QColor(c).name(); };
+    QJsonArray ansi;
+    for (QRgb c : s.ansi)
+        ansi.append(hex(c));
+    return {{"name", s.name}, {"foreground", hex(s.fg)}, {"background", hex(s.bg)},
+            {"cursor", hex(s.cursor)}, {"ansi", ansi}};
+}
+
+static bool fromJson(const QJsonObject &o, Scheme *s)
+{
+    const QJsonArray ansi = o["ansi"].toArray();
+    const QColor fg(o["foreground"].toString()), bg(o["background"].toString()),
+        cur(o["cursor"].toString());
+    s->name = o["name"].toString().trimmed();
+    if (s->name.isEmpty() || !fg.isValid() || !bg.isValid() || !cur.isValid() || ansi.size() != 16)
+        return false;
+    s->fg = fg.rgb() & 0xffffff;
+    s->bg = bg.rgb() & 0xffffff;
+    s->cursor = cur.rgb() & 0xffffff;
+    for (int i = 0; i < 16; i++) {
+        const QColor c(ansi[i].toString());
+        if (!c.isValid())
+            return false;
+        s->ansi[i] = c.rgb() & 0xffffff;
+    }
+    return true;
+}
+
+QList<Scheme> userSchemes()
+{
+    QFile f(schemesFile());
+    QList<Scheme> list;
+    if (!f.open(QIODevice::ReadOnly))
+        return list;
+    for (const QJsonValue &v : QJsonDocument::fromJson(f.readAll()).array()) {
+        Scheme s;
+        if (fromJson(v.toObject(), &s))
+            list.append(s);
+    }
+    return list;
+}
+
+const QList<Scheme> &schemes()
+{
+    static QList<Scheme> all;
+    all = builtInSchemes() + userSchemes();
+    return all;
+}
+
+bool isUserScheme(const QString &name)
+{
+    for (const Scheme &s : userSchemes())
+        if (s.name == name)
+            return true;
+    return false;
+}
+
+static void writeUserSchemes(const QList<Scheme> &list)
+{
+    QJsonArray a;
+    for (const Scheme &s : list)
+        a.append(toJson(s));
+    QDir().mkpath(QFileInfo(schemesFile()).path());
+    QSaveFile f(schemesFile());
+    if (f.open(QIODevice::WriteOnly)) {
+        f.write(QJsonDocument(a).toJson());
+        f.commit();
+    }
+}
+
+bool saveUserScheme(const Scheme &s)
+{
+    for (const Scheme &b : builtInSchemes())
+        if (b.name == s.name)
+            return false;
+    QList<Scheme> list = userSchemes();
+    list.removeIf([&](const Scheme &e) { return e.name == s.name; });
+    list.append(s);
+    writeUserSchemes(list);
+    return true;
+}
+
+void removeUserScheme(const QString &name)
+{
+    QList<Scheme> list = userSchemes();
+    list.removeIf([&](const Scheme &s) { return s.name == name; });
+    writeUserSchemes(list);
+}
+
+Scheme schemeFromConf(const sshlx_conf *c, const QString &name)
+{
+    const int key = sshlx_conf_key_find("colours");
+    const auto slot = [&](int i) {
+        return qRgb(sshlx_conf_get_int_int(c, key, i * 3, 0), sshlx_conf_get_int_int(c, key, i * 3 + 1, 0),
+                    sshlx_conf_get_int_int(c, key, i * 3 + 2, 0)) & 0xffffff;
+    };
+    Scheme s;
+    s.name = name;
+    s.fg = slot(0);
+    s.bg = slot(2);
+    s.cursor = slot(5);
+    for (int i = 0; i < 8; i++) {
+        s.ansi[i] = slot(6 + i * 2);
+        s.ansi[8 + i] = slot(7 + i * 2);
+    }
+    return s;
+}
+
+bool exportScheme(const Scheme &s, const QString &path, QString *error)
+{
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(toJson(s)).toJson()) < 0 || !f.commit()) {
+        *error = f.errorString();
+        return false;
+    }
+    return true;
+}
+
+bool importScheme(const QString &path, Scheme *out, QString *error)
+{
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        *error = f.errorString();
+        return false;
+    }
+    if (!fromJson(QJsonDocument::fromJson(f.readAll()).object(), out)) {
+        *error = QCoreApplication::translate("TerminalLook", "That is not an sshLX colour scheme.");
+        return false;
+    }
+    return true;
+}
+
 // PuTTY's 22 slots for a scheme.
 static QList<QRgb> colourSlots(const Scheme &s)
 {
@@ -83,8 +233,9 @@ void applyScheme(sshlx_conf *c, const Scheme &s)
 int currentScheme(const sshlx_conf *c)
 {
     const int key = sshlx_conf_key_find("colours");
-    for (int n = 0; n < schemes().size(); n++) {
-        const QList<QRgb> rgb = colourSlots(schemes()[n]);
+    const QList<Scheme> all = schemes();
+    for (int n = 0; n < all.size(); n++) {
+        const QList<QRgb> rgb = colourSlots(all[n]);
         bool same = true;
         for (int i = 0; same && i < rgb.size(); i++)
             same = sshlx_conf_get_int_int(c, key, i * 3, -1) == qRed(rgb[i]) &&

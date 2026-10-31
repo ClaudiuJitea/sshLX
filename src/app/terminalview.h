@@ -25,6 +25,8 @@ struct TerminalFonts {
     int border = 1;
 };
 
+struct KeyBinding;
+
 class TerminalView : public QWidget {
     Q_OBJECT
 public:
@@ -46,6 +48,8 @@ public:
     bool usedFallbackFont() const { return m_fallbackFont; }
     // Keys are dropped while a config push owns the session.
     void setInputBlocked(bool blocked) { m_inputBlocked = blocked; }
+    // A locked tab, separate from the blocks that come and go by themselves.
+    void setLocked(bool locked) { m_locked = locked; }
     // The http(s) link drawn at a cell, or empty.
     QString linkAt(const QPoint &cell) const;
     // Keyword colours, or null for none. The set must outlive the view;
@@ -74,6 +78,12 @@ public:
     QSize minimumSizeHint() const override;
 
 signals:
+    // A key or typed text went to the session.
+    void keySent(const sshlx_key_event *ev, int qtKey);
+    void textSent(const QString &text);
+    // A key mapping was pressed, in place of sending the key.
+    void keyBound(const KeyBinding &binding);
+    void filesDropped(const QStringList &paths);
     void gridResized(int cols, int rows);
     // A right click the terminal did not use, or the Menu key (as Ctrl).
     void rightClicked(const QPoint &globalPos, const QPoint &cell, bool ctrl);
@@ -82,6 +92,8 @@ signals:
     void keyPressedWhileDisconnected();
 
 protected:
+    void dragEnterEvent(QDragEnterEvent *e) override;
+    void dropEvent(QDropEvent *e) override;
     void paintEvent(QPaintEvent *) override;
     void resizeEvent(QResizeEvent *) override;
     void keyPressEvent(QKeyEvent *) override;
@@ -136,7 +148,7 @@ private:
     std::unique_ptr<class HighlightSet> m_find;
     int m_findRow = -1, m_findStart = 0, m_findLen = 0;
     bool m_capturing = false;
-    bool m_inputBlocked = false;
+    bool m_inputBlocked = false, m_locked = false;
     QColor m_defaultBg = Qt::black;
     int m_cursorCol = 0, m_cursorRow = 0;
     bool m_rawPointer = false, m_busy = false;
