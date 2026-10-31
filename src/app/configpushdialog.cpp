@@ -13,6 +13,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QShortcut>
 #include <QSpinBox>
 #include <QVBoxLayout>
 
@@ -22,7 +23,9 @@ ConfigPushDialog::ConfigPushDialog(const QString &text, const QString &sessionNa
                                    QWidget *parent)
     : QDialog(parent)
 {
-    setWindowTitle(tr("Paste Configuration"));
+    // Not modal: GNOME pins a modal window to its parent, so it couldn't be
+    // moved, and the terminal behind it could be neither read nor copied from.
+    setWindowTitle(tr("Paste Configuration - %1").arg(sessionName));
     resize(760, 680);
     QSettings st;
     const ConfigPush::Options def;
@@ -93,10 +96,13 @@ ConfigPushDialog::ConfigPushDialog(const QString &text, const QString &sessionNa
     lh->addWidget(m_count);
 
     QPushButton *cancel = secondaryButton(tr("Cancel"));
-    QPushButton *go = primaryButton(tr("Start"));
+    m_go = primaryButton(tr("Start"));
+    m_go->setToolTip(tr("Ctrl+Enter"));
     connect(cancel, &QPushButton::clicked, this, &QDialog::reject);
-    connect(go, &QPushButton::clicked, this, &ConfigPushDialog::start);
-    v->addWidget(footer({cancel, go}, left));
+    connect(m_go, &QPushButton::clicked, this, &ConfigPushDialog::start);
+    v->addWidget(footer({cancel, m_go}, left));
+    auto *startKey = new QShortcut(QKeySequence("Ctrl+Return"), this);
+    connect(startKey, &QShortcut::activated, m_go, &QPushButton::click);
 
     connect(m_text, &QPlainTextEdit::textChanged, this, &ConfigPushDialog::updateCount);
     connect(m_skipBlank, &QCheckBox::toggled, this, &ConfigPushDialog::updateCount);
@@ -120,6 +126,11 @@ ConfigPush::Options ConfigPushDialog::options() const
     o.skipComments = m_skipComments->isChecked();
     o.stopOnError = m_stopOnError->isChecked();
     return o;
+}
+
+void ConfigPushDialog::setText(const QString &text)
+{
+    m_text->setPlainText(text);
 }
 
 void ConfigPushDialog::loadFile()
@@ -146,6 +157,7 @@ void ConfigPushDialog::updateCount()
         n++;
     }
     m_count->setText(tr("%n line(s) to send", nullptr, n));
+    m_go->setEnabled(n > 0);
 }
 
 void ConfigPushDialog::start()

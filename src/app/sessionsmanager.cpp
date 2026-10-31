@@ -15,6 +15,7 @@
 #include "icons.h"
 #include "mainwindow.h"
 #include "sessionwidget.h"
+#include "tabcolours.h"
 
 Q_DECLARE_METATYPE(SessionWidget *)
 
@@ -82,6 +83,7 @@ SessionsManager::SessionsManager(DocumentArea *docs, MainWindow *window)
         menu.addAction(Icons::get("lock"), tr("Lock"), this, [this] { setSelectedLocked(true); });
         menu.addAction(tr("Unlock"), this, [this] { setSelectedLocked(false); });
         m_docs->buildGroupMenu(tabs, menu.addMenu(tr("Tab Group")));
+        m_docs->buildColourMenu(tabs, menu.addMenu(Icons::get("palette"), tr("Tab Colour")));
         menu.addSeparator();
         menu.addAction(Icons::get("close"), tr("Close"), this, [this] { closeSelected(); });
         menu.exec(m_list->viewport()->mapToGlobal(pos));
@@ -123,6 +125,8 @@ void SessionsManager::refresh()
             f.setBold(true);
             it->setFont(0, f);
         }
+        if (const QString c = m_docs->colourFor(s); !c.isEmpty())
+            it->setIcon(2, TabColours::swatch(c));
         it->setSelected(keep.contains(s));
         shown++;
     }

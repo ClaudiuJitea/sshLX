@@ -35,6 +35,7 @@ const QRegularExpression &blockRe()
 
 constexpr int kQuestionQuietMs = 700;  // silence before a tail counts as a question
 constexpr int kBlockLineMs = 40;       // between the lines of a banner
+constexpr int kRenameQuietMs = 3000;   // silence before a new device name counts
 
 } // namespace
 
@@ -57,6 +58,43 @@ QString ConfigPush::defaultErrorPattern()
         R"(|ambiguous command|command not found|command rejected|command fail)");
 }
 
+QString ConfigPush::promptStem(const QString &prompt)
+{
+    QString t = prompt.trimmed();
+    static const QRegularExpression ends(R"([#>$%\]]+\s*$)");
+    t.remove(ends);
+    t.remove(QRegularExpression(R"(^[<\[]+)"));
+    QStringList words = t.split(QRegularExpression(R"(\s+)"), Qt::SkipEmptyParts);
+    words.removeIf([](const QString &w) { return w.startsWith('('); });
+    if (words.isEmpty())
+        return {};
+    QString word = words.first();
+    for (const QString &w : std::as_const(words))
+        if (w.contains('@'))
+            word = w;
+    return word.section(QRegularExpression("[:(]"), 0, 0);
+}
+
+bool ConfigPush::looksLikePrompt(const QString &line) const
+{
+    // "Reading database ... 45%" is progress, not a csh prompt.
+    static const QRegularExpression percent(R"(\d\s*%\s*$)");
+    return m_prompt.match(line).hasMatch() && !percent.match(line).hasMatch();
+}
+
+bool ConfigPush::isOurPrompt(const QString &line) const
+{
+    return looksLikePrompt(line) && (m_stem.isEmpty() || line.contains(m_stem));
+}
+
+// The line just sent gives the device a new name, and so a new prompt.
+bool ConfigPush::renamesDevice() const
+{
+    static const QRegularExpression re(R"(^\s*(set\s+)?(hostname|sysname|host-name|system\s+host-name)\b)",
+                                       QRegularExpression::CaseInsensitiveOption);
+    return m_index < m_lines.size() && re.match(m_lines[m_index].text).hasMatch();
+}
+
 QString ConfigPush::patternError(const QString &pattern)
 {
     QRegularExpression re(pattern);
@@ -72,7 +110,7 @@ ConfigPush::ConfigPush(QObject *parent) : QObject(parent)
     m_quietCheck.setSingleShot(true);
     m_quietCheck.setInterval(kQuestionQuietMs);
     connect(&m_quietCheck, &QTimer::timeout, this, [this] {
-        if (m_step != Step::WaitPrompt && m_step != Step::Sync)
+        if (m_step != Step::WaitPrompt && m_step != Step::Sync && m_step != Step::WaitReady)
             return;
         const QString t = tail();
         if (questionRe().match(t).hasMatch()) {
@@ -87,7 +125,7 @@ ConfigPush::ConfigPush(QObject *parent) : QObject(parent)
             pauseWith(Pause::Question, tail().trimmed());
         else if (m_step == Step::Sync)
             pauseWith(Pause::NoPrompt, tail().trimmed());
-        else if (m_step == Step::WaitPrompt)
+        else if (m_step == Step::WaitPrompt || m_step == Step::WaitReady)
             pauseWith(Pause::Timeout, outputSinceSend().trimmed());
     });
 }
@@ -119,6 +157,7 @@ void ConfigPush::start(const QStringList &lines, const Options &options)
     m_blockEnd = QChar();
     m_escape = 0;
     m_pendingCr = false;
+    m_stem.clear();
     m_timeout.setInterval(options.timeoutMs);
     if (m_lines.isEmpty()) {
         finish(true);
@@ -199,7 +238,17 @@ bool ConfigPush::sawEcho() const { return m_lineStart > 0; }
 
 void ConfigPush::onOutput()
 {
-    if (m_step == Step::Paused || m_step == Step::Between || m_step == Step::Idle)
+    if (m_step == Step::Paused) {
+        // Answered in the terminal: the line goes on once it has really ended.
+        if ((m_pause == Pause::Question || m_pause == Pause::Timeout) && isOurPrompt(tail())) {
+            m_settle.setInterval(settleMs());
+            m_settle.start();
+        } else {
+            m_settle.stop();
+        }
+        return;
+    }
+    if (m_step == Step::Between || m_step == Step::Idle)
         return;
     m_timeout.start();     // any output means it is alive: a slow "write mem" is fine
     m_settle.stop();
@@ -230,8 +279,23 @@ void ConfigPush::onOutput()
         m_quietCheck.start();
         return;
     }
-    if (sawEcho() && m_prompt.match(t).hasMatch())
+    if (m_step == Step::Sync) {
+        if (sawEcho() && looksLikePrompt(t)) {
+            m_settle.setInterval(settleMs());
+            m_settle.start();
+        }
+        return;
+    }
+    // Only this device's own prompt ends a line. Output that merely looks like
+    // a prompt must not: the command is still running, and the next line
+    // would go to it.
+    if (sawEcho() && isOurPrompt(t)) {
+        m_settle.setInterval(settleMs());
         m_settle.start();
+    } else if (sawEcho() && looksLikePrompt(t) && renamesDevice()) {
+        m_settle.setInterval(kRenameQuietMs);
+        m_settle.start();
+    }
 }
 
 // Whatever came back for the current line, without its echo and the prompt.
@@ -252,6 +316,21 @@ QString ConfigPush::outputSinceSend() const
 
 void ConfigPush::evaluate()
 {
+    if (m_step == Step::Paused) {
+        if (m_pause != Pause::Question && m_pause != Pause::Timeout)
+            return;
+        m_pause = Pause::None;
+        m_step = m_resumeStep;
+        emit resumed();
+    }
+    if (looksLikePrompt(tail()))
+        m_stem = promptStem(tail());     // also follows a change of name
+    if (m_step == Step::WaitReady) {
+        m_timeout.stop();
+        m_step = Step::Between;
+        advance();
+        return;
+    }
     if (m_step == Step::Sync) {
         m_timeout.stop();
         m_step = Step::Between;
@@ -381,10 +460,19 @@ void ConfigPush::skip()
         return;
     }
     m_lines[m_index].state = LineState::Skipped;
+    const bool ready = looksLikePrompt(tail());
     m_pause = Pause::None;
-    m_step = Step::Between;
     m_index++;
-    advance();
+    if (ready || m_index >= total()) {
+        m_step = Step::Between;
+        advance();
+        return;
+    }
+    // It is still running: the next line waits for the prompt.
+    emit progress(m_index, total());
+    m_step = Step::WaitReady;
+    m_timeout.start();
+    onOutput();
 }
 
 void ConfigPush::keepWaiting()
@@ -394,6 +482,10 @@ void ConfigPush::keepWaiting()
     m_pause = Pause::None;
     m_step = m_resumeStep;
     m_timeout.start();
+    // The user has seen this prompt and says the line is done. A new prompt
+    // (su, a jump to another host) then counts from here on.
+    if (looksLikePrompt(tail()) && !isOurPrompt(tail()))
+        m_stem = promptStem(tail());
     onOutput();    // it may have answered while the user was reading
 }
 
@@ -424,6 +516,26 @@ void ConfigPush::ignoreErrors()
     m_step = Step::Between;
     m_index++;
     advance();
+}
+
+int ConfigPush::failedCount() const
+{
+    int n = 0;
+    for (const Line &l : m_lines)
+        n += l.state == LineState::Failed || l.state == LineState::Skipped;
+    return n;
+}
+
+void ConfigPush::retryFailed()
+{
+    if (running())
+        return;
+    QStringList again;
+    for (const Line &l : m_lines)
+        if (l.state == LineState::Failed || l.state == LineState::Skipped)
+            again.append(l.text);
+    if (!again.isEmpty())
+        start(again, m_opts);
 }
 
 void ConfigPush::requestPause()

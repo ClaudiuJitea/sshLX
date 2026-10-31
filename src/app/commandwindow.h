@@ -1,7 +1,8 @@
 // CommandWindow - types a command once and sends it to several tabs: the
-// current one, those visible, all of them, or a chosen few. One line goes out
-// straight away; several go through Paste Configuration's line-by-line
-// sending, each tab pausing on its own if its device complains.
+// current one, those visible, all of them, a tab group, or chosen tabs picked
+// from a row of chips. One line goes out straight away; several go through
+// Paste Configuration's line-by-line sending, each tab pausing on its own if
+// its device complains.
 #pragma once
 
 #include <QList>
@@ -10,10 +11,12 @@
 #include <QWidget>
 
 class DocumentArea;
-class QComboBox;
+class QButtonGroup;
+class QHBoxLayout;
 class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QScrollArea;
 class QToolButton;
 class SessionWidget;
 
@@ -27,7 +30,7 @@ public:
     void setTarget(Target t);
     void setChosen(const QList<SessionWidget *> &tabs);
     void setTargetGroup(const QString &name);
-    // The list of tab groups changed.
+    // Tabs, their titles or their groups changed.
     void refreshGroups();
     // Each key typed in a terminal also goes to the other target tabs.
     void setLive(bool on);
@@ -38,6 +41,8 @@ public:
     int send(const QString &text);
     void focusInput();
     QPlainTextEdit *input() const { return m_input; }
+    // The chips' labels, which tell tabs with the same title apart.
+    QStringList chipLabels() const;
 
 protected:
     bool eventFilter(QObject *o, QEvent *e) override;
@@ -46,16 +51,24 @@ protected:
 private:
     void sendInput();
     void updateSummary();
-    void buildChooser();
+    void rebuildChips();
+    void rebuildGroups();
+    void fitInput();
     void history(int delta);
 
     DocumentArea *m_docs;
-    QComboBox *m_target;
-    QToolButton *m_choose;
+    QButtonGroup *m_pills;
+    QHBoxLayout *m_pillRow;
+    QList<QToolButton *> m_groupPills;
+    QScrollArea *m_chipArea;
+    QWidget *m_chipHost;
+    QHBoxLayout *m_chipRow;
     QPlainTextEdit *m_input;
-    class QCheckBox *m_live;
+    QToolButton *m_live;
     QPushButton *m_send;
     QLabel *m_summary;
+    Target m_target = Current;
+    QString m_group;              // set: the target is this tab group
     QList<QPointer<SessionWidget>> m_chosen;
     QStringList m_history;
     int m_historyPos = 0;

@@ -57,6 +57,7 @@ public:
     QList<LogonStep> logon;   // Run after connecting; empty: the nearest folder's
     QString logonScript;      // A Python script run after them; same inheritance
     QString buttonBar;        // Button bar shown on this tab; same inheritance
+    QString tabColour;        // "#rrggbb" for its tabs; same inheritance
     QString antiIdleText;     // Sent after antiIdleSeconds idle; same inheritance
     int antiIdleSeconds = 0;
 
@@ -123,6 +124,7 @@ public:
     QList<LogonStep> resolveLogon(const ConnectionNode *n) const;
     QString resolveLogonScript(const ConnectionNode *n) const;
     QString resolveButtonBar(const ConnectionNode *n) const;
+    QString resolveTabColour(const ConnectionNode *n) const;
     const ConnectionNode *resolveAntiIdle(const ConnectionNode *n) const;
     // Connections using the credential, directly or through a folder.
     QList<ConnectionNode *> linkedConnections(const QString &id) const;

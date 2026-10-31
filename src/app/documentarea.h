@@ -42,6 +42,11 @@ public:
     // Tab groups: assign the tabs to a group, new or existing, or to none.
     void buildGroupMenu(const QList<SessionWidget *> &tabs, QMenu *menu);
     QStringList groupNames() const;
+    // The colour a tab shows: its own, its group's or its connection's.
+    QString colourFor(SessionWidget *s) const;
+    // Colour menus for tabs, and for the group they are in.
+    void buildColourMenu(const QList<SessionWidget *> &tabs, QMenu *menu);
+    void buildGroupColourMenu(const QString &group, QMenu *menu);
     void nextTab(int direction);
     void updateTab(SessionWidget *s);
     QString dockName(SessionWidget *s) const;

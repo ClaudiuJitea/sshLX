@@ -268,6 +268,14 @@ const ConnectionNode *ConnectionTree::resolveAntiIdle(const ConnectionNode *n) c
     return nullptr;
 }
 
+QString ConnectionTree::resolveTabColour(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (!n->tabColour.isEmpty())
+            return n->tabColour;
+    return {};
+}
+
 QString ConnectionTree::resolveButtonBar(const ConnectionNode *n) const
 {
     for (; n; n = n->parent)
@@ -288,6 +296,7 @@ static QJsonObject nodeToJson(const ConnectionNode *n)
     if (!n->credential.isEmpty()) o["credential"] = n->credential;
     if (!n->logonScript.isEmpty()) o["logonScript"] = n->logonScript;
     if (!n->buttonBar.isEmpty()) o["buttonBar"] = n->buttonBar;
+    if (!n->tabColour.isEmpty()) o["tabColour"] = n->tabColour;
     if (n->antiIdleSeconds > 0) {
         o["antiIdleText"] = n->antiIdleText;
         o["antiIdleSeconds"] = n->antiIdleSeconds;
@@ -343,6 +352,7 @@ static ConnectionNode *nodeFromJson(const QJsonObject &o, QString *error)
     n->credential = o["credential"].toString();
     n->logonScript = o["logonScript"].toString();
     n->buttonBar = o["buttonBar"].toString();
+    n->tabColour = o["tabColour"].toString();
     n->antiIdleText = o["antiIdleText"].toString();
     n->antiIdleSeconds = o["antiIdleSeconds"].toInt();
     for (const QJsonValue &v : o["logon"].toArray()) {

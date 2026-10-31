@@ -1,4 +1,5 @@
 #include "documentarea.h"
+#include "tabcolours.h"
 
 #include <QInputDialog>
 #include <QLineEdit>
@@ -211,6 +212,7 @@ void DocumentArea::buildTabMenu(SessionWidget *s, QMenu *menu)
                         &SessionWidget::fileTransferRequested);
     if (!s->isFileTransfer()) {
         buildGroupMenu({s}, menu->addMenu(tr("Tab &Group")));
+        buildColourMenu({s}, menu->addMenu(Icons::get("palette"), tr("Tab Co&lour")));
         QAction *lock = menu->addAction(Icons::get("lock"), tr("Loc&k Session"));
         lock->setCheckable(true);
         lock->setChecked(s->locked());
@@ -279,9 +281,53 @@ void DocumentArea::updateTab(SessionWidget *s)
         t = QStringLiteral("[%1] %2").arg(s->group(), t);
     dw->setWindowTitle(t);
     dw->setToolTip(s->locked() ? tr("%1 (locked)").arg(s->title()) : s->title());
+    const QColor c(colourFor(s));
+    if (CDockWidgetTab *tab = dw->tabWidget()) {
+        // Its own sheet takes priority over the dock manager's. Tinted, with a
+        // solid bar, so the active tab stays the one that stands out.
+        const QString rgb = QStringLiteral("%1, %2, %3").arg(c.red()).arg(c.green()).arg(c.blue());
+        tab->setStyleSheet(!c.isValid() ? QString() : QStringLiteral(
+            "ads--CDockWidgetTab { background: rgba(%1, 55); border-top: 3px solid %2; margin-top: 3px; }"
+            "ads--CDockWidgetTab:hover { background: rgba(%1, 85); }"
+            "ads--CDockWidgetTab[activeTab=\"true\"] { background: rgba(%1, 120); }"
+            "ads--CDockWidgetTab[focused=\"true\"] { background: rgba(%1, 150); border-top: 3px solid %2; margin-top: 3px; }")
+            .arg(rgb, c.name()));
+    }
     dw->setIcon(s->locked() ? Icons::get("lock")
                 : s->state() == SSHLX_STATE_DISCONNECTED ? Icons::get("disconnected")
                                                          : s->protocolIcon());
+}
+
+QString DocumentArea::colourFor(SessionWidget *s) const
+{
+    if (!s->tabColour().isEmpty())
+        return s->tabColour();
+    const QString group = TabColours::groupColour(s->group());
+    return group.isEmpty() ? s->connectionColour() : group;
+}
+
+void DocumentArea::buildColourMenu(const QList<SessionWidget *> &tabs, QMenu *menu)
+{
+    QList<QPointer<SessionWidget>> list;
+    for (SessionWidget *s : tabs)
+        list.append(s);
+    TabColours::fillMenu(menu, tabs.size() == 1 ? tabs.first()->tabColour() : QString(),
+                         m_mgr->window(), [list](const QString &colour) {
+        for (const QPointer<SessionWidget> &s : list)
+            if (s)
+                s->setTabColour(colour);
+    });
+}
+
+void DocumentArea::buildGroupColourMenu(const QString &group, QMenu *menu)
+{
+    TabColours::fillMenu(menu, TabColours::groupColour(group), m_mgr->window(),
+                         [this, group](const QString &colour) {
+        TabColours::setGroupColour(group, colour);
+        for (SessionWidget *s : sessions())
+            if (s->group() == group)
+                s->setGroup(group);      // tells everyone who shows it
+    });
 }
 
 QStringList DocumentArea::groupNames() const
@@ -319,6 +365,11 @@ void DocumentArea::buildGroupMenu(const QList<SessionWidget *> &tabs, QMenu *men
         menu->addAction(n, this, [assign, n] { assign(n); });
     menu->addSeparator();
     menu->addAction(tr("No Group"), this, [assign] { assign(QString()); });
+    if (tabs.size() == 1 && !tabs.first()->group().isEmpty()) {
+        menu->addSeparator();
+        buildGroupColourMenu(tabs.first()->group(),
+                             menu->addMenu(tr("Group &Colour")));
+    }
 }
 
 QString DocumentArea::dockName(SessionWidget *s) const

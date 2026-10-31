@@ -22,6 +22,7 @@ or with a real mouse and desktop. These come before new features. The steps are 
 
 - [ ] Run section 1h of the checklist. The list above covers 0.7.3; these eleven are newer.
 - [ ] Run sections 1h and 1i on real equipment.
+- [ ] Other modal dialogs still can't be moved on GNOME, as Paste Configuration couldn't.
 
 ## Improvements to the newest features
 
@@ -92,3 +93,7 @@ customisable menu and toolbar, and MSI installers.
 - [Key features](https://www.vandyke.com/products/securecrt/key_features.html)
 - [New in 9.7](https://www.vandyke.com/products/securecrt/new-in.html)
 - [Version history](https://www.vandyke.com/products/securecrt/history.txt)
+
+## Postponed
+
+- [ ] AI assistant: explain selected output, and suggest fixes in Paste Configuration. Nothing would run without review.

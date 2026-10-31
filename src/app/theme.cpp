@@ -121,6 +121,13 @@ QToolButton:hover { background: %hover%; }
 QToolButton:pressed { background: %selection%; }
 QToolButton:checked { background: %selection%; border-color: %accent%; }
 QToolButton:disabled { color: %disabled%; }
+QToolButton[pill] { background: %button%; border: 1px solid %border%; border-radius: 12px; padding: 3px 12px; }
+QToolButton[pill]:hover { border-color: %accent%; background: %hover%; }
+QToolButton[pill]:checked { background: %accent%; border-color: %accent%; color: #ffffff; }
+QToolButton[pill="live"]:checked { background: #c2571a; border-color: #c2571a; color: #ffffff; }
+QToolButton[pill="chip"]:checked { background: %selection%; border-color: %accent%; color: %text%; }
+QLabel#commandSummary { color: %muted%; }
+QScrollArea#commandChips, QScrollArea#commandChips > QWidget > QWidget { background: transparent; }
 
 QPushButton { background: %button%; color: %text%; border: 1px solid %border%; border-radius: 6px; padding: 6px 16px; min-height: 20px; }
 QPushButton:hover { background: %buttonhover%; border-color: %borderstrong%; }

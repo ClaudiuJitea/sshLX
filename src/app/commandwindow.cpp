@@ -1,14 +1,14 @@
 #include "commandwindow.h"
 
-#include <QCheckBox>
-#include <QComboBox>
+#include <QButtonGroup>
 #include <QFontDatabase>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
-#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QScrollArea>
+#include <QStyle>
 #include <QTextBlock>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -17,50 +17,83 @@
 #include "documentarea.h"
 #include "icons.h"
 #include "sessionwidget.h"
+#include "tabcolours.h"
+
+static constexpr int kMaxInputLines = 5;
+
+static QToolButton *pill(const QString &text, const char *kind = "true")
+{
+    auto *b = new QToolButton;
+    b->setText(text);
+    b->setCheckable(true);
+    b->setProperty("pill", kind);
+    b->setCursor(Qt::PointingHandCursor);
+    return b;
+}
 
 CommandWindow::CommandWindow(DocumentArea *docs, QWidget *parent) : QWidget(parent), m_docs(docs)
 {
     auto *v = new QVBoxLayout(this);
-    v->setContentsMargins(6, 4, 6, 4);
-    v->setSpacing(4);
-    auto *row = new QHBoxLayout;
-    m_target = new QComboBox;
-    m_target->addItem(tr("Current tab"), Current);
-    m_target->addItem(tr("Visible tabs"), Visible);
-    m_target->addItem(tr("All tabs"), All);
-    m_target->addItem(tr("Chosen tabs"), Chosen);
-    m_choose = new QToolButton;
-    m_choose->setText(tr("Choose..."));
-    m_choose->setPopupMode(QToolButton::InstantPopup);
-    m_choose->setMenu(new QMenu(m_choose));
-    connect(m_choose->menu(), &QMenu::aboutToShow, this, &CommandWindow::buildChooser);
+    v->setContentsMargins(8, 4, 8, 6);
+    v->setSpacing(6);
+
+    m_pillRow = new QHBoxLayout;
+    m_pillRow->setSpacing(4);
+    m_pills = new QButtonGroup(this);
+    m_pills->setExclusive(true);
+    const QList<QPair<Target, QString>> fixed{{Current, tr("Current")}, {Visible, tr("Visible")},
+                                              {All, tr("All")}, {Chosen, tr("Choose")}};
+    for (const auto &[target, text] : fixed) {
+        QToolButton *b = pill(text);
+        m_pills->addButton(b, target);
+        m_pillRow->addWidget(b);
+        connect(b, &QToolButton::clicked, this, [this, target = target] { setTarget(target); });
+    }
+    m_pills->button(Current)->setChecked(true);
     m_summary = new QLabel;
-    m_live = new QCheckBox(tr("Type live"));
+    m_summary->setObjectName("commandSummary");
+    m_live = pill(tr("Type live"), "live");
     m_live->setObjectName("liveTyping");
-    m_live->setToolTip(tr("Each key typed in a terminal also goes to the other tabs listed here."));
-    m_send = DialogKit::primaryButton(tr("Send"));
-    m_send->setIcon(Icons::get("send"));
-    row->addWidget(new QLabel(tr("Send to")));
-    row->addWidget(m_target);
-    row->addWidget(m_choose);
-    row->addWidget(m_live);
-    row->addWidget(m_summary, 1);
-    row->addWidget(m_send);
-    v->addLayout(row);
+    m_live->setToolTip(tr("Each key typed in a terminal also goes to the other tabs selected here."));
+    m_live->setAccessibleDescription(m_live->toolTip());
+    m_pillRow->addStretch(1);
+    m_pillRow->addWidget(m_summary);
+    m_pillRow->addSpacing(6);
+    m_pillRow->addWidget(m_live);
+    v->addLayout(m_pillRow);
+
+    // The tabs themselves, one click each, shown only when choosing.
+    m_chipHost = new QWidget;
+    m_chipRow = new QHBoxLayout(m_chipHost);
+    m_chipRow->setContentsMargins(0, 0, 0, 0);
+    m_chipRow->setSpacing(4);
+    m_chipArea = new QScrollArea;
+    m_chipArea->setObjectName("commandChips");
+    m_chipArea->setFrameShape(QFrame::NoFrame);
+    m_chipArea->setWidgetResizable(true);
+    m_chipArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_chipArea->setWidget(m_chipHost);
+    m_chipArea->hide();
+    v->addWidget(m_chipArea);
+
+    auto *row = new QHBoxLayout;
+    row->setSpacing(6);
     m_input = new QPlainTextEdit;
     m_input->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
-    m_input->setPlaceholderText(tr("Enter sends. Shift+Enter starts a new line. Up and Down recall "
-                                   "earlier commands."));
-    m_input->setMaximumHeight(m_input->fontMetrics().lineSpacing() * 3 + 12);
-    m_input->installEventFilter(this);
-    v->addWidget(m_input);
-
-    m_target->setAccessibleName(tr("Send to"));
+    m_input->setPlaceholderText(tr("Command to send.  Enter sends, Shift+Enter adds a line, "
+                                   "Up recalls."));
     m_input->setAccessibleName(tr("Command to send"));
-    m_live->setAccessibleDescription(m_live->toolTip());
+    m_input->installEventFilter(this);
+    m_send = DialogKit::primaryButton(tr("Send"));
+    m_send->setIcon(Icons::get("send"));
+    row->addWidget(m_input, 1);
+    row->addWidget(m_send, 0, Qt::AlignBottom);
+    v->addLayout(row);
+    fitInput();
+
     connect(m_send, &QPushButton::clicked, this, &CommandWindow::sendInput);
-    connect(m_target, &QComboBox::currentIndexChanged, this, &CommandWindow::updateSummary);
-    connect(m_live, &QCheckBox::toggled, this, &CommandWindow::updateSummary);
+    connect(m_input, &QPlainTextEdit::textChanged, this, &CommandWindow::fitInput);
+    connect(m_live, &QToolButton::toggled, this, &CommandWindow::updateSummary);
     SessionWidget::setMirror([this](SessionWidget *source) {
         QList<SessionWidget *> list;
         if (m_live->isChecked())
@@ -68,34 +101,131 @@ CommandWindow::CommandWindow(DocumentArea *docs, QWidget *parent) : QWidget(pare
         list.removeAll(source);
         return list;
     });
-    connect(docs, &DocumentArea::sessionCountChanged, this, &CommandWindow::updateSummary);
+    connect(docs, &DocumentArea::sessionCountChanged, this, &CommandWindow::refreshGroups);
     connect(docs, &DocumentArea::currentSessionChanged, this, &CommandWindow::updateSummary);
     // Always starts on the current tab: a send to many should be chosen each time.
     updateSummary();
 }
 
+void CommandWindow::fitInput()
+{
+    const int blocks = m_input->document()->blockCount();
+    const int lines = qBound(1, blocks, kMaxInputLines);
+    m_input->setVerticalScrollBarPolicy(blocks > kMaxInputLines ? Qt::ScrollBarAsNeeded
+                                                                : Qt::ScrollBarAlwaysOff);
+    m_input->setFixedHeight(m_input->fontMetrics().lineSpacing() * lines + 14);
+}
+
 void CommandWindow::setTarget(Target t)
 {
-    m_target->setCurrentIndex(m_target->findData(t));
+    m_target = t;
+    m_group.clear();
+    m_pills->button(t)->setChecked(true);
+    m_chipArea->setVisible(t == Chosen);
+    if (t == Chosen)
+        rebuildChips();
+    updateSummary();
 }
 
 void CommandWindow::setTargetGroup(const QString &name)
 {
+    m_group = name;
+    m_chipArea->hide();
     refreshGroups();
-    m_target->setCurrentIndex(m_target->findData(name));
+}
+
+void CommandWindow::setChosen(const QList<SessionWidget *> &tabs)
+{
+    m_chosen.clear();
+    for (SessionWidget *s : tabs)
+        m_chosen.append(s);
+    rebuildChips();
+    updateSummary();
 }
 
 void CommandWindow::refreshGroups()
 {
-    const QVariant was = m_target->currentData();
-    QSignalBlocker block(m_target);
-    while (m_target->count() > 4)
-        m_target->removeItem(4);
-    for (const QString &n : m_docs->groupNames())
-        m_target->addItem(tr("Group: %1").arg(n), n);
-    const int i = m_target->findData(was);
-    m_target->setCurrentIndex(i >= 0 ? i : 0);
+    rebuildGroups();
+    rebuildChips();
     updateSummary();
+}
+
+void CommandWindow::rebuildGroups()
+{
+    const QStringList names = m_docs->groupNames();
+    if (!m_group.isEmpty() && !names.contains(m_group)) {
+        m_group.clear();          // its last tab went
+        m_target = Current;
+        m_pills->button(Current)->setChecked(true);
+    }
+    for (QToolButton *b : std::as_const(m_groupPills)) {
+        m_pills->removeButton(b);
+        delete b;
+    }
+    m_groupPills.clear();
+    int at = 4;                   // after the four fixed pills
+    for (const QString &n : names) {
+        QToolButton *b = pill(n, "group");
+        b->setToolTip(tr("Tab group %1").arg(n));
+        b->setStyleSheet(TabColours::pillStyle(TabColours::groupColour(n)));
+        m_pills->addButton(b);
+        m_pillRow->insertWidget(at++, b);
+        m_groupPills.append(b);
+        b->setChecked(n == m_group);
+        connect(b, &QToolButton::clicked, this, [this, n] {
+            m_group = n;
+            m_chipArea->hide();
+            updateSummary();
+        });
+    }
+}
+
+void CommandWindow::rebuildChips()
+{
+    while (QLayoutItem *item = m_chipRow->takeAt(0)) {
+        delete item->widget();
+        delete item;
+    }
+    m_chosen.removeAll(nullptr);
+    QHash<QString, int> uses, seen;
+    QList<SessionWidget *> tabs;
+    for (SessionWidget *s : m_docs->sessions()) {
+        if (!s->isFileTransfer()) {
+            tabs.append(s);
+            uses[s->title()]++;
+        }
+    }
+    for (SessionWidget *s : tabs) {
+        const QString title = s->title();
+        // Two tabs on one host share a title, and must still be told apart.
+        const QString label = uses[title] > 1 ? tr("%1 (%2)").arg(title).arg(++seen[title]) : title;
+        QToolButton *b = pill(fontMetrics().elidedText(label, Qt::ElideMiddle, 240), "chip");
+        b->setToolTip(label);
+        b->setProperty("fullLabel", label);
+        b->setStyleSheet(TabColours::pillStyle(m_docs->colourFor(s)));
+        b->setChecked(m_chosen.contains(s));
+        QPointer<SessionWidget> p(s);
+        connect(b, &QToolButton::toggled, this, [this, p](bool on) {
+            m_chosen.removeAll(p);
+            if (on && p)
+                m_chosen.append(p);
+            updateSummary();
+        });
+        m_chipRow->addWidget(b);
+    }
+    if (tabs.isEmpty())
+        m_chipRow->addWidget(new QLabel(tr("No terminal tabs are open.")));
+    m_chipRow->addStretch(1);
+    // Not sizeHint(): new chips aren't styled yet, and it comes out far too small.
+    m_chipArea->setFixedHeight(fontMetrics().height() + 16);
+}
+
+QStringList CommandWindow::chipLabels() const
+{
+    QStringList out;
+    for (QToolButton *b : m_chipHost->findChildren<QToolButton *>())
+        out.append(b->property("fullLabel").toString());
+    return out;
 }
 
 void CommandWindow::setLive(bool on)
@@ -115,61 +245,19 @@ void CommandWindow::hideEvent(QHideEvent *e)
     QWidget::hideEvent(e);
 }
 
-void CommandWindow::setChosen(const QList<SessionWidget *> &tabs)
-{
-    m_chosen.clear();
-    for (SessionWidget *s : tabs)
-        m_chosen.append(s);
-    updateSummary();
-}
-
-void CommandWindow::buildChooser()
-{
-    QMenu *menu = m_choose->menu();
-    menu->clear();
-    const QList<SessionWidget *> all = m_docs->sessions();
-    for (SessionWidget *s : all) {
-        if (s->isFileTransfer())
-            continue;
-        QAction *a = menu->addAction(s->title());
-        a->setCheckable(true);
-        a->setChecked(m_chosen.contains(s));
-        QPointer<SessionWidget> p(s);
-        connect(a, &QAction::toggled, this, [this, p](bool on) {
-            m_chosen.removeAll(p);
-            if (on && p)
-                m_chosen.append(p);
-            updateSummary();
-        });
-    }
-    if (menu->isEmpty())
-        menu->addAction(tr("(no terminal tabs)"))->setEnabled(false);
-}
-
 QList<SessionWidget *> CommandWindow::targets() const
 {
     QList<SessionWidget *> r;
-    const QVariant target = m_target->currentData();
-    if (target.typeId() == QMetaType::QString) {
+    if (!m_group.isEmpty()) {
         for (SessionWidget *s : m_docs->sessions())
-            if (s->group() == target.toString())
+            if (s->group() == m_group)
                 r.append(s);
-    } else switch (target.toInt()) {
-    case Current:
+    } else if (m_target == Current) {
         if (SessionWidget *s = m_docs->currentSession())
             r.append(s);
-        break;
-    case Visible:
+    } else {
         for (SessionWidget *s : m_docs->sessions())
-            if (s->isVisible())
-                r.append(s);
-        break;
-    case All:
-        r = m_docs->sessions();
-        break;
-    default:
-        for (SessionWidget *s : m_docs->sessions())
-            if (m_chosen.contains(s))
+            if (m_target == All || (m_target == Visible ? s->isVisible() : m_chosen.contains(s)))
                 r.append(s);
     }
     r.erase(std::remove_if(r.begin(), r.end(), [](SessionWidget *s) { return s->isFileTransfer(); }),
@@ -179,16 +267,22 @@ QList<SessionWidget *> CommandWindow::targets() const
 
 void CommandWindow::updateSummary()
 {
-    const int n = int(targets().size());
-    const QVariant target = m_target->currentData();
-    const bool wide = target.typeId() == QMetaType::QString || target.toInt() != Current;
-    m_choose->setVisible(target.typeId() == QMetaType::Int && target.toInt() == Chosen);
-    m_summary->setText(!wide ? QString()
-                       : m_live->isChecked() ? tr("Typing goes to %n tab(s)", nullptr, n)
-                                             : tr("%n tab(s)", nullptr, n));
+    const QList<SessionWidget *> list = targets();
+    const int n = int(list.size());
+    QString text;
+    if (m_live->isChecked())
+        text = tr("Typing goes to %n tab(s)", nullptr, n);
+    else if (n == 0)
+        text = tr("No tabs selected");
+    else if (m_target == Current && m_group.isEmpty())
+        text = list.first()->title();
+    else
+        text = tr("%n tab(s)", nullptr, n);
+    m_summary->setText(text);
     QFont f = m_summary->font();
-    f.setBold((wide && n > 1) || m_live->isChecked());
+    f.setBold(n > 1 || m_live->isChecked());
     m_summary->setFont(f);
+    m_send->setEnabled(n > 0);
 }
 
 int CommandWindow::send(const QString &text)

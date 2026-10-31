@@ -820,13 +820,27 @@ void SessionWidget::pasteConfiguration(const QString &text)
         DialogKit::warning(window(), tr("Paste Configuration"), tr("This session is not connected."));
         return;
     }
-    QPointer<SessionWidget> self(this);
-    ConfigPushDialog dlg(text.isNull() ? QGuiApplication::clipboard()->text() : text,
-                         m_title, window());
-    if (dlg.exec() != QDialog::Accepted || !self || state() != SSHLX_STATE_CONNECTED)
+    if (m_pushDialog) {
+        if (!text.isNull())
+            m_pushDialog->setText(text);
+        m_pushDialog->raise();
+        m_pushDialog->activateWindow();
         return;
-    m_push->start(dlg.lines(), dlg.options());
-    m_view->setFocus();
+    }
+    auto *dlg = new ConfigPushDialog(text.isNull() ? QGuiApplication::clipboard()->text() : text,
+                                     m_title, window());
+    m_pushDialog = dlg;
+    dlg->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dlg, &QDialog::accepted, this, [this, dlg] {
+        if (state() != SSHLX_STATE_CONNECTED) {
+            DialogKit::warning(window(), tr("Paste Configuration"),
+                               tr("This session is not connected."));
+        } else if (!m_push->running() && !m_locked) {
+            m_push->start(dlg->lines(), dlg->options());
+            m_view->setFocus();
+        }
+    });
+    dlg->show();
 }
 
 void SessionWidget::findInTerminal()
@@ -1380,6 +1394,12 @@ void SessionWidget::handleDroppedFiles(const QStringList &paths)
     } else if (choice == 3) {
         emit sftpUploadRequested(paths);
     }
+}
+
+void SessionWidget::setTabColour(const QString &colour)
+{
+    m_tabColour = colour;
+    emit identityChanged();
 }
 
 void SessionWidget::setGroup(const QString &name)

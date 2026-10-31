@@ -18,6 +18,7 @@ public:
     ConfigPushDialog(const QString &text, const QString &sessionName, QWidget *parent);
 
     QStringList lines() const;
+    void setText(const QString &text);
     ConfigPush::Options options() const;
 
 private:
@@ -27,6 +28,7 @@ private:
 
     QPlainTextEdit *m_text;
     QLabel *m_count;
+    class QPushButton *m_go;
     QSpinBox *m_timeout, *m_delay;
     QCheckBox *m_skipBlank, *m_skipComments, *m_stopOnError;
     QLineEdit *m_prompt, *m_error;

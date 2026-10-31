@@ -9,6 +9,7 @@
 
 class QLabel;
 class QLineEdit;
+class QListWidget;
 class QMenu;
 class QPlainTextEdit;
 class QProgressBar;
@@ -38,12 +39,14 @@ private:
     void onFinished(bool complete);
     void sendEdited();
     void updateSendLabel();
+    void updateList();
 
     ConfigPush *m_push;
     ConfigPush::Pause m_reason = ConfigPush::Pause::None;
     QLabel *m_status;
     QProgressBar *m_bar;
-    QPushButton *m_pause, *m_stop, *m_copy, *m_close;
+    QPushButton *m_pause, *m_stop, *m_copy, *m_close, *m_lines, *m_again;
+    QListWidget *m_list;
     QWidget *m_ask;
     QLabel *m_question;
     QPlainTextEdit *m_output;

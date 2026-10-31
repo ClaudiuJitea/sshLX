@@ -40,6 +40,12 @@ Automated against a fake device by `ctest` (`tests/session_e2e_test.cpp`); these
 | 1b.6 | The same over a 9600 serial console, with a `banner motd` block and `write memory` | Nothing lost; no false stops |
 | 1b.7 | Pull the cable during a push | Bar says Stopped, with what was applied |
 
+- [ ] The Paste Configuration window moves on GNOME Wayland, and the terminal stays usable behind it.
+- [ ] `sudo apt upgrade` in a paste: answer its question; the next line waits for the shell prompt.
+- [ ] A long `show` or `write memory` on a real device; a line with `hostname` in it.
+- [ ] Skip Line on a line still running: the next waits for the prompt.
+- [ ] Lines list, Retry Failed, and Ctrl+Enter to start.
+
 ## 1c. Keyword highlighting
 
 | # | Step | Expected |

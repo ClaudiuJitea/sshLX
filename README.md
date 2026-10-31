@@ -29,14 +29,15 @@
   - tabs reconnect when their device comes back;
   - a permission error explains the `dialout` group fix.
 - **Terminal mouse:** selecting copies, right click pastes (or shows the menu, or extends the selection as in PuTTY: Options → Terminal), and Ctrl + right click or the Menu key always shows the menu. Pasting several lines asks first.
-- **Paste Configuration:** sends a config to a device line by line, waiting for the prompt after each. On an error, a question or silence it pauses in the tab so you can amend the line, skip it or answer, then carries on from there. Handles `--More--` pagers and Cisco banners, and takes text from the clipboard or a file.
+- **Paste Configuration:** sends a config to a device line by line, waiting for the prompt after each. On an error, a question or silence it pauses in the tab so you can amend the line, skip it or answer, then carries on from there. It learns the device's prompt first, so a line only counts as done when that prompt returns, and output like `Reading database ... 45%` can't move it on. A Lines list shows how each line went, and Retry Failed sends the failed ones again. Handles `--More--` pagers and Cisco banners, and takes text from the clipboard or a file.
 - **Terminal menu:** Select All, Find in Terminal (Ctrl+Shift+F), Save and Print Terminal Text, Clear Terminal, your own macros, Change Terminal Title, and **links** that open with Ctrl + click.
 - **Keyword highlighting:** colour words or regular expressions in live output, each with its own colours, in priority order. Select text and choose Add Keyword, or manage the list in Options → Highlighting. Ctrl+Shift+H toggles it.
 - **File transfer:** right-click an SSH connection or tab and choose **File Transfer** for a two-pane file manager in its own tab: drag files either way, whole folders included, with a queue, a toolbar for rename, delete and new folder on either side, and a filter. It logs in the same way as the connection, saved passwords included. Devices without SFTP, such as many switches, get SCP instead: type the remote path and send or fetch one file at a time.
 - **Credentials Manager:** shared logins (user name, password, private key and its passphrase) linked to connections or whole folders. Change one and every linked connection uses it at its next login. Secrets are kept only in the system keyring. For prompts inside a session, such as `sudo`, use **Send Saved Password** in the terminal menu.
-- **Command Window** (View menu, Ctrl+Shift+B): type a command once and send it to the current tab, the visible tabs, all tabs or a chosen few. Several lines go out one at a time, and each tab pauses on its own if its device complains.
+- **Command Window** (View menu, Ctrl+Shift+B): type a command once and send it to the current tab, the visible tabs, all tabs, a tab group, or the tabs you pick from a row of chips. Several lines go out one at a time, and each tab pauses on its own if its device complains.
   Tick **Type live** and each key typed in a terminal also goes to those tabs. It turns off when the Command Window closes.
 - **Tab groups:** right-click a tab → Tab Group. Groups appear as Command Window targets and are kept in workspaces.
+- **Tab colours:** right-click a tab → Tab Colour, or give a colour to a whole group, a connection or a folder, so production never looks like the lab.
 - **Session locking:** a locked tab takes no typing, paste, macro, command or script, and is skipped by sends to several tabs.
 - **Active Sessions** (View menu): a filterable list of open tabs, to reconnect, disconnect, lock, group or close several at once.
 - **Button bars:** your macros as a row of buttons, with folders as drop-down menus. Move a bar to the top or bottom edge. Give macros different bars and pick one from the list, or link a bar to a connection or folder so it follows the tab. Right-click a button to run it on the Command Window's tabs. A macro can also run a Python script.
@@ -76,9 +77,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.7.7_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.8.0_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.7.7-x86_64.AppImage && ./sshLX-0.7.7-x86_64.AppImage
+chmod +x sshLX-0.8.0-x86_64.AppImage && ./sshLX-0.8.0-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.

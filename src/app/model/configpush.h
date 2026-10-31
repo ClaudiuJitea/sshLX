@@ -45,6 +45,9 @@ public:
     // A pattern's complaint, or empty if it compiles.
     static QString patternError(const QString &pattern);
     static int settleMs() { return 80; }
+    // The part of a prompt that stays when its mode or folder changes:
+    // "R1" of R1(config-if)#, "clau@laptop" of (base) clau@laptop:~$.
+    static QString promptStem(const QString &prompt);
 
     explicit ConfigPush(QObject *parent = nullptr);
 
@@ -67,6 +70,9 @@ public:
     void requestPause();               // pause after the current line
     void resume();                     // after requestPause()
     void stop();                       // give up; the remaining lines stay unsent
+    // Starts again with the lines that failed or were skipped.
+    void retryFailed();
+    int failedCount() const;
     void connectionLost();
 
 signals:
@@ -74,10 +80,15 @@ signals:
     void sendKeys(const QString &text);  // as is: a pager's space bar
     void progress(int current, int total);
     void paused(ConfigPush::Pause reason, const QString &deviceOutput);
+    // The device got back to its prompt during a pause, as when the answer
+    // was typed in the terminal.
+    void resumed();
     void finished(bool complete);
 
 private:
-    enum class Step { Idle, Sync, WaitPrompt, TextBlock, Paused, Between };
+    // WaitReady: a line was skipped while it was still running, so the next
+    // one must wait for the prompt.
+    enum class Step { Idle, Sync, WaitPrompt, WaitReady, TextBlock, Paused, Between };
 
     void acceptText(const QString &text);
     void onOutput();
@@ -90,6 +101,9 @@ private:
     QString outputSinceSend() const;
     QString tail() const;
     bool sawEcho() const;
+    bool looksLikePrompt(const QString &line) const;
+    bool isOurPrompt(const QString &line) const;
+    bool renamesDevice() const;
 
     Options m_opts;
     QRegularExpression m_prompt, m_error;
@@ -109,5 +123,6 @@ private:
     bool m_pendingCr = false;
 
     QChar m_blockEnd;           // delimiter of a banner or macro being sent
+    QString m_stem;             // what this device's prompts have in common
     QTimer m_settle, m_timeout, m_quietCheck;
 };

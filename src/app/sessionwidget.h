@@ -109,6 +109,12 @@ public:
     bool locked() const { return m_locked; }
     void setLocked(bool on);
     QString group() const { return m_group; }
+    // This tab's own colour, set from its menu; empty: its group's, then
+    // its connection's.
+    QString tabColour() const { return m_tabColour; }
+    void setTabColour(const QString &colour);
+    QString connectionColour() const { return m_connectionColour; }
+    void setConnectionColour(const QString &colour) { m_connectionColour = colour; }
     void setGroup(const QString &name);
     // Live typing: the tabs that also get what is typed in this one.
     using Mirror = std::function<QList<SessionWidget *>(SessionWidget *source)>;
@@ -278,7 +284,7 @@ private:
     QByteArray m_zTail;              // the end of the last output, for a split header
     bool m_zOffered = false;
     bool m_locked = false, m_logPaused = false;
-    QString m_group, m_logPath;
+    QString m_group, m_logPath, m_tabColour, m_connectionColour;
     QDateTime m_logOpened;
     QTimer *m_logTimer;
     ScriptRecorder *m_recorder = nullptr;
@@ -291,6 +297,7 @@ private:
     qint64 m_received = 0;
     QDateTime m_connectedAt;
     QPointer<class HexViewDialog> m_hexView;
+    QPointer<class ConfigPushDialog> m_pushDialog;
     struct FindMatch { int row, start, len; };
     QStringList m_findRows;       // every row of the buffer, oldest first
     QList<FindMatch> m_matches;

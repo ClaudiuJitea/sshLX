@@ -41,6 +41,7 @@ add_library(sshlx-app STATIC
   highlightruledialog.cpp
   macros.cpp
   commandwindow.cpp
+  tabcolours.cpp
   hexview.cpp
   cli.cpp
   keybindings.cpp

@@ -1,6 +1,7 @@
 #include "connectionspanel.h"
 #include "bulkeditdialog.h"
 #include "logondialog.h"
+#include "tabcolours.h"
 #include "macros.h"
 #include "dialogkit.h"
 #include "icons.h"
@@ -388,6 +389,11 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
                 n->antiIdleSeconds = dlg.antiIdleSeconds();
                 m_store->touch(n);
             }
+        });
+        TabColours::fillMenu(menu.addMenu(Icons::get("palette"), tr("Tab Co&lour")), n->tabColour, this,
+                             [this, n](const QString &colour) {
+            n->tabColour = colour;
+            m_store->touch(n);
         });
         QMenu *bars = menu.addMenu(tr("&Button Bar"));
         const auto setBar = [this, n](const QString &name) {

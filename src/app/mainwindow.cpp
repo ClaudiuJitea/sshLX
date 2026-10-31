@@ -189,6 +189,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     for (auto sig : {&ConnectionStore::reset, &ConnectionStore::structureChanged})
         connect(m_store, sig, this, &MainWindow::refreshRecent);
     connect(m_store, &ConnectionStore::nodeChanged, this, &MainWindow::refreshRecent);
+    // A connection's or folder's colour shows on its open tabs straight away.
+    connect(m_store, &ConnectionStore::nodeChanged, this, [this] {
+        for (SessionWidget *s : sessions()) {
+            const ConnectionNode *n = m_store->tree().findById(s->connectionId());
+            const QString colour = n ? m_store->tree().resolveTabColour(n) : QString();
+            if (colour != s->connectionColour()) {
+                s->setConnectionColour(colour);
+                m_docs->updateTab(s);
+            }
+        }
+    });
     refreshRecent();
 
     // Command Window and button bar: QMainWindow's own docks, outside the
@@ -1003,6 +1014,7 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
         m_command->refreshGroups();
         m_sessionsPanel->refreshSoon();
     });
+    connect(s, &SessionWidget::titleChanged, m_command, &CommandWindow::refreshGroups);
     connect(s, &SessionWidget::stateChanged, m_sessionsPanel, &SessionsManager::refreshSoon);
     connect(s, &SessionWidget::titleChanged, m_sessionsPanel, &SessionsManager::refreshSoon);
     s->setLogonScript([this, connectionId] {
@@ -1033,6 +1045,8 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
         }
         return list;
     });
+    if (const ConnectionNode *n = m_store->tree().findById(connectionId))
+        s->setConnectionColour(m_store->tree().resolveTabColour(n));
     m_docs->addSession(s, panel, dockName);
     if (connectNow)
         s->connectSession();
@@ -1426,7 +1440,8 @@ QStringList MainWindow::openTabEntries() const
         } else {
             continue;
         }
-        r << m_docs->dockName(s) + '\t' + kind + '\t' + ref + '\t' + s->group();
+        r << m_docs->dockName(s) + '\t' + kind + '\t' + ref + '\t' + s->group() + '\t'
+                 + s->tabColour();
     }
     return r;
 }
@@ -1502,10 +1517,14 @@ int MainWindow::restoreTabs(const QStringList &entries)
             openLocalShell(dock);
             n++;
         }
-        if (!p.value(3).isEmpty())
-            for (SessionWidget *s : sessions())
-                if (!before.contains(s))
-                    s->setGroup(p[3]);
+        for (SessionWidget *s : sessions()) {
+            if (before.contains(s))
+                continue;
+            if (!p.value(3).isEmpty())
+                s->setGroup(p[3]);
+            if (!p.value(4).isEmpty())
+                s->setTabColour(p[4]);
+        }
     }
     m_restoring = false;
     writeOpenTabsBreadcrumb();
