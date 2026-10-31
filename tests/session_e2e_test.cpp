@@ -632,7 +632,13 @@ private slots:
         sshlx_conf_set_int(base, sshlx_conf_key_protocol(), SessionWidget::protocolId("ssh"));
         sshlx_conf_set_str(base, sshlx_conf_key_find("host"), "testserver");
         sshlx_conf_set_int(base, sshlx_conf_key_find("port"), 22);
-        sshlx_conf_set_str(base, sshlx_conf_key_find("username"), "tester");
+        // With OpenSSH's "sshd -i" this is a real user and key.
+        const QByteArray user = qgetenv("SSHLX_E2E_SSH_USER");
+        const QByteArray key = qgetenv("SSHLX_E2E_SSH_KEY");
+        sshlx_conf_set_str(base, sshlx_conf_key_find("username"),
+                           user.isEmpty() ? "tester" : user.constData());
+        if (!key.isEmpty())
+            sshlx_conf_set_str(base, sshlx_conf_key_find("keyfile"), key.constData());
         sshlx_conf_set_int(base, sshlx_conf_key_find("proxy_type"), 5);    // PROXY_CMD
         sshlx_conf_set_str(base, sshlx_conf_key_find("proxy_telnet_command"), server.constData());
         sshlx_conf_set_bool(base, sshlx_conf_key_find("even_proxy_localhost"), true);

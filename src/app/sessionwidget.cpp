@@ -20,9 +20,11 @@
 #include <QHash>
 #include <QLabel>
 #include <QMenu>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QScrollBar>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -40,7 +42,9 @@
 #include "highlightruledialog.h"
 #include "highlightrules.h"
 #include "keyring.h"
+#include "logonrunner.h"
 #include "macros.h"
+#include "modemtransfer.h"
 #include "promptbar.h"
 #include "settingsdialog.h"
 #include "terminallook.h"
@@ -162,9 +166,27 @@ struct SessionTrampolines {
             W(ctx)->m_raw(data, len);
             return;
         }
-        W(ctx)->m_findStale = true;
-        if (W(ctx)->m_push->running())
-            W(ctx)->m_push->feed(data, len);
+        SessionWidget *w = W(ctx);
+        w->m_findStale = true;
+        if (w->m_push->running())
+            w->m_push->feed(data, len);
+        if (w->m_logon->running())
+            w->m_logon->feed(data, len);
+        if (w->receivers(SIGNAL(outputReceived(QByteArray))) > 0)
+            emit w->outputReceived(QByteArray(data, qsizetype(len)));
+        // "sz" or "rz" just started on the remote side. Search across the
+        // chunk boundary, then wait for a repeat of the header no more.
+        if (!w->m_zOffered && !w->m_filePanel) {
+            const QByteArray look = w->m_zTail + QByteArray(data, qsizetype(len));
+            bool receiving = false;
+            if (ModemTransfer::findZmodemStart(look, &receiving) >= 0
+                && !w->m_push->running()
+                && QSettings().value("transfers/zmodemAuto", true).toBool()) {
+                w->m_zOffered = true;
+                QTimer::singleShot(0, w, [w, receiving] { w->offerZmodem(receiving); });
+            }
+        }
+        w->m_zTail = (w->m_zTail + QByteArray(data, qsizetype(len))).right(5);
     }
     static void palette_changed(void *ctx, sshlx_rgb bg)
     { W(ctx)->m_view->setDefaultBackground(QColor(bg.r, bg.g, bg.b)); }
@@ -272,6 +294,30 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
     m_findBar = new FindBar;
     v->addWidget(m_findBar);
 
+    // A status line for what runs in this tab on its own: logon actions and
+    // file transfers through the terminal.
+    m_taskBar = new QFrame;
+    m_taskBar->setObjectName("TaskBar");
+    m_taskBar->setFrameShape(QFrame::StyledPanel);
+    auto *tb = new QHBoxLayout(m_taskBar);
+    tb->setContentsMargins(8, 3, 8, 3);
+    m_taskLabel = new QLabel;
+    m_taskProgress = new QProgressBar;
+    m_taskProgress->setMaximumWidth(220);
+    m_taskProgress->setMaximumHeight(14);
+    m_taskProgress->setTextVisible(false);
+    m_taskStop = new QPushButton(tr("&Stop"));
+    m_taskClose = new QPushButton(tr("Close"));
+    tb->addWidget(m_taskLabel, 1);
+    tb->addWidget(m_taskProgress);
+    tb->addWidget(m_taskStop);
+    tb->addWidget(m_taskClose);
+    m_taskBar->setVisible(false);
+    v->addWidget(m_taskBar);
+    m_modem = new ModemTransfer(this);
+    m_logon = new LogonRunner(this);
+    m_modem->setBacklog([this] { return sendBacklog(); });
+
     m_termRow = new QHBoxLayout;
     m_termRow->setSpacing(0);
     m_view = new TerminalView;
@@ -307,6 +353,50 @@ SessionWidget::SessionWidget(const sshlx_conf *conf, const QString &displayName,
     });
     connect(m_push, &ConfigPush::sendKeys, this, [this](const QString &keys) {
         sshlx_session_text(m_session, keys.toUtf8().constData());
+    });
+    connect(m_taskClose, &QPushButton::clicked, m_taskBar, &QWidget::hide);
+    connect(m_taskStop, &QPushButton::clicked, this, [this] {
+        if (m_modem->running())
+            m_modem->cancel();
+        else
+            m_logon->abort(tr("Stopped."));
+    });
+    connect(m_modem, &ModemTransfer::send, this, &SessionWidget::sendRaw);
+    connect(m_modem, &ModemTransfer::progress, this,
+            [this](const QString &file, qint64 done, qint64 total) {
+        const QString protocol = tr("%1: ").arg(m_taskLabel->property("protocol").toString());
+        m_taskLabel->setText(total > 0 ? protocol + tr("%1, %2 of %3 KB").arg(file).arg(done / 1024).arg(total / 1024)
+                                       : protocol + tr("%1, %2 KB").arg(file).arg(done / 1024));
+        m_taskProgress->setRange(0, total > 0 ? 1000 : 0);
+        if (total > 0)
+            m_taskProgress->setValue(int(done * 1000 / total));
+    });
+    connect(m_modem, &ModemTransfer::finished, this, [this](bool ok, const QString &message) {
+        setRawReceiver(nullptr);
+        m_view->setInputBlocked(false);
+        m_zOffered = false;
+        m_zTail.clear();
+        closeTask(ok ? message : tr("Transfer failed: %1").arg(message));
+        m_view->setFocus();
+    });
+    connect(m_logon, &LogonRunner::send, this, [this](const QString &line) {
+        sshlx_session_text(m_session, (line + '\r').toUtf8().constData());
+    });
+    connect(m_logon, &LogonRunner::sendPassword, this, &SessionWidget::runLogonPassword);
+    connect(m_logon, &LogonRunner::progress, this,
+            [this](int step, int total, const QString &wait) {
+        showTask(wait.isEmpty() ? tr("Logon actions: step %1 of %2").arg(step).arg(total)
+                                : tr("Logon actions: step %1 of %2, waiting for \"%3\"")
+                                      .arg(step).arg(total).arg(wait),
+                 true);
+        m_taskProgress->setRange(0, total);
+        m_taskProgress->setValue(step - 1);
+    });
+    connect(m_logon, &LogonRunner::finished, this, [this](bool ok, const QString &message) {
+        if (ok)
+            m_taskBar->hide();
+        else
+            closeTask(tr("Logon actions stopped: %1").arg(message));
     });
     connect(m_pushBar, &ConfigPushBar::inputBlockChanged, m_view, &TerminalView::setInputBlocked);
     connect(m_pushBar, &ConfigPushBar::passwordMenuRequested, this, &SessionWidget::buildPasswordMenu);
@@ -448,6 +538,8 @@ QString SessionWidget::closeWarning() const
 {
     if (m_push->running())
         return tr("A configuration is still being sent to this device.");
+    if (m_modem->running())
+        return tr("A file is still being transferred.");
     if (m_panelBusy && m_panelBusy())
         return tr("Files are still being transferred.");
     if (isFileTransfer())
@@ -504,6 +596,11 @@ void SessionWidget::onState(sshlx_state st)
     if (st == SSHLX_STATE_DISCONNECTED) {
         m_prompts->clearAll();
         m_push->connectionLost();
+        m_modem->connectionLost();
+        if (m_logon->running())
+            m_logon->abort(tr("The connection was lost."));
+    } else if (st == SSHLX_STATE_CONNECTED && m_logonSteps && !m_filePanel) {
+        m_logon->start(m_logonSteps());
     }
     updateReconnectBar();
     emit stateChanged(st);
@@ -989,6 +1086,235 @@ void SessionWidget::runMacro(const QString &text)
         sshlx_session_text(m_session, (lines.first() + '\r').toUtf8().constData());
 }
 
+bool SessionWidget::canSendCommands() const
+{
+    return state() == SSHLX_STATE_CONNECTED && !m_filePanel && !m_push->running()
+        && !m_modem->running();
+}
+
+void SessionWidget::sendCommand(const QString &line)
+{
+    if (canSendCommands())
+        sshlx_session_text(m_session, (line + '\r').toUtf8().constData());
+}
+
+void SessionWidget::sendCommands(const QStringList &lines)
+{
+    if (canSendCommands())
+        m_push->start(lines, ConfigPush::Options());
+}
+
+void SessionWidget::typeText(const QString &text)
+{
+    if (canSendCommands())
+        sshlx_session_text(m_session, text.toUtf8().constData());
+}
+
+bool SessionWidget::logonRunning() const { return m_logon->running(); }
+
+bool SessionWidget::transferRunning() const { return m_modem->running(); }
+
+void SessionWidget::showTask(const QString &text, bool canStop)
+{
+    m_taskLabel->setText(text);
+    m_taskProgress->setVisible(canStop);
+    m_taskStop->setVisible(canStop);
+    m_taskClose->setVisible(!canStop);
+    m_taskBar->setVisible(true);
+}
+
+void SessionWidget::closeTask(const QString &finalText)
+{
+    if (finalText.isEmpty())
+        m_taskBar->hide();
+    else
+        showTask(finalText, false);
+}
+
+void SessionWidget::beginModem()
+{
+    m_logon->stop();
+    m_view->setInputBlocked(true);
+    setRawReceiver([this](const char *data, size_t len) { m_modem->feed(data, len); });
+    m_taskProgress->setRange(0, 0);
+}
+
+bool SessionWidget::sendModem(int protocol, const QStringList &files)
+{
+    if (!canSendCommands() || files.isEmpty())
+        return false;
+    const auto p = ModemTransfer::Protocol(protocol);
+    m_taskLabel->setProperty("protocol", ModemTransfer::protocolName(p));
+    showTask(tr("%1: waiting for the other end...").arg(ModemTransfer::protocolName(p)), true);
+    beginModem();
+    m_modem->startSend(p, files);
+    // The receiver was started first, so its "ready" went past while a file
+    // was being picked, and it may not repeat that for ten seconds and more.
+    if (p != ModemTransfer::Protocol::Zmodem && !m_zTail.isEmpty()) {
+        const char last = m_zTail.back();
+        const char before = m_zTail.size() > 1 ? m_zTail[m_zTail.size() - 2] : '\n';
+        if ((last == 'C' && (before == 'C' || !QChar::isLetterOrNumber(uchar(before))))
+            || last == '\x15')
+            m_modem->feed(&last, 1);
+    }
+    return true;
+}
+
+bool SessionWidget::receiveModem(int protocol, const QString &directory, const QString &saveAs)
+{
+    if (!canSendCommands())
+        return false;
+    const auto p = ModemTransfer::Protocol(protocol);
+    m_taskLabel->setProperty("protocol", ModemTransfer::protocolName(p));
+    showTask(tr("%1: waiting for the other end...").arg(ModemTransfer::protocolName(p)), true);
+    beginModem();
+    m_modem->startReceive(p, directory, saveAs);
+    return true;
+}
+
+static QString downloadFolder()
+{
+    const QString d = QSettings().value("transfers/downloadDir").toString();
+    return d.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::DownloadLocation) : d;
+}
+
+// The remote side is waiting. Nothing arrives on disk without being accepted
+// here: a file could just as well be sent by something the user only "cat"ed.
+void SessionWidget::offerZmodem(bool receiving)
+{
+    const auto proto = int(ModemTransfer::Protocol::Zmodem);
+    QPointer<SessionWidget> self(this);
+    auto decline = [self] {
+        if (self) {
+            self->sendRaw(QByteArray(8, '\x18') + QByteArray(8, '\b'));
+            self->m_zOffered = false;
+            self->m_zTail.clear();
+        }
+    };
+    if (!canSendCommands()) {
+        m_zOffered = false;
+        return;
+    }
+    if (receiving) {
+        QString dir = downloadFolder();
+        while (true) {
+            const int choice = DialogKit::message(
+                window(), DialogKit::Kind::Question, tr("Receive files with Zmodem?"),
+                tr("The remote side wants to send files. They would be saved in:\n%1").arg(dir),
+                {tr("Cancel"), tr("Change Folder..."), tr("Receive")}, 2);
+            if (!self)
+                return;
+            if (choice == 2)
+                break;
+            if (choice != 1) {
+                decline();
+                return;
+            }
+            const QString picked = QFileDialog::getExistingDirectory(window(), tr("Save Files In"), dir);
+            if (!self)
+                return;
+            if (!picked.isEmpty()) {
+                dir = picked;
+                QSettings().setValue("transfers/downloadDir", dir);
+            }
+        }
+        if (!receiveModem(proto, dir))
+            decline();
+        return;
+    }
+    const QStringList files = QFileDialog::getOpenFileNames(window(), tr("Send Files with Zmodem"));
+    if (!self)
+        return;
+    if (files.isEmpty() || !sendModem(proto, files))
+        decline();
+}
+
+void SessionWidget::buildModemMenu(QMenu *menu)
+{
+    using P = ModemTransfer::Protocol;
+    const bool can = canSendCommands();
+    for (P p : {P::Xmodem, P::Xmodem1k, P::Ymodem, P::Zmodem}) {
+        const QString name = ModemTransfer::protocolName(p);
+        menu->addAction(tr("Send with %1...").arg(name), this, [this, p, name] {
+            const bool single = p == P::Xmodem || p == P::Xmodem1k;
+            const QStringList files =
+                single ? QStringList{QFileDialog::getOpenFileName(window(), tr("Send with %1").arg(name))}
+                       : QFileDialog::getOpenFileNames(window(), tr("Send with %1").arg(name));
+            if (files.isEmpty() || files.first().isEmpty())
+                return;
+            // Unlike the others, the Zmodem sender starts its receiver.
+            if (p == P::Zmodem)
+                sendCommand("rz");
+            sendModem(int(p), files);
+        })->setEnabled(can);
+    }
+    menu->addSeparator();
+    for (P p : {P::Xmodem, P::Ymodem, P::Zmodem}) {
+        const QString name = ModemTransfer::protocolName(p);
+        menu->addAction(tr("Receive with %1...").arg(name), this, [this, p, name] {
+            if (p == P::Xmodem) {
+                const QString path = QFileDialog::getSaveFileName(window(), tr("Receive with Xmodem"),
+                                                                  downloadFolder());
+                if (!path.isEmpty())
+                    receiveModem(int(p), QFileInfo(path).path(), QFileInfo(path).fileName());
+                return;
+            }
+            const QString dir = QFileDialog::getExistingDirectory(
+                window(), tr("Receive with %1").arg(name), downloadFolder());
+            if (!dir.isEmpty()) {
+                QSettings().setValue("transfers/downloadDir", dir);
+                receiveModem(int(p), dir);
+            }
+        })->setEnabled(can);
+    }
+}
+
+void SessionWidget::sendPasswordQuietly(const QString &credentialId,
+                                        std::function<void(bool, const QString &)> done)
+{
+    const QString account = m_credentialAccount ? m_credentialAccount(credentialId) : QString();
+    if (account.isEmpty()) {
+        done(false, tr("no saved credential is linked"));
+        return;
+    }
+    QPointer<SessionWidget> self(this);
+    Keyring::read(account, [self, done](bool found, const QString &pw) {
+        if (!self || self->state() != SSHLX_STATE_CONNECTED) {
+            done(false, tr("the session has ended"));
+        } else if (!found) {
+            done(false, tr("the credential has no password in the keyring"));
+        } else {
+            sshlx_session_text(self->m_session, (pw + '\r').toUtf8().constData());
+            done(true, QString());
+        }
+    });
+}
+
+void SessionWidget::runLogonPassword(const QString &credential)
+{
+    // A password sent to anything but a hidden prompt lands on screen and in
+    // the shell's history.
+    if (!ConfigPush::looksLikePasswordPrompt(m_logon->lastLine())) {
+        m_logon->abort(tr("the password was not sent, as \"%1\" is not a password prompt.")
+                           .arg(m_logon->lastLine().trimmed()));
+        return;
+    }
+    QPointer<SessionWidget> self(this);
+    sendPasswordQuietly(credential, [self](bool ok, const QString &error) {
+        if (!self)
+            return;
+        if (ok)
+            self->m_logon->stepDone();
+        else
+            self->m_logon->abort(error);
+    });
+}
+
+bool SessionWidget::atPasswordPrompt() const
+{
+    return ConfigPush::looksLikePasswordPrompt(m_view->rowText(m_view->cursorRow()));
+}
+
 void SessionWidget::buildPasswordMenu(QMenu *menu)
 {
     const QList<SavedPassword> saved = m_savedPasswords ? m_savedPasswords() : QList<SavedPassword>();
@@ -1074,7 +1400,7 @@ void SessionWidget::buildContextMenu(QMenu *menu, const QString &link)
         });
         menu->addSeparator();
     }
-    const bool canSend = state() == SSHLX_STATE_CONNECTED && !m_push->running();
+    const bool canSend = canSendCommands();
     menu->addAction(Icons::get("copy"), tr("&Copy"), this, &SessionWidget::copy);
     menu->addAction(Icons::get("paste"), tr("&Paste"), this, &SessionWidget::paste);
     menu->addAction(Icons::get("paste"), tr("Paste Con&figuration..."), this,
@@ -1113,11 +1439,15 @@ void SessionWidget::buildContextMenu(QMenu *menu, const QString &link)
                     &SessionWidget::fileTransferRequested)
         ->setEnabled(protocol() == protocolId("ssh"));
 
-    QMenu *macros = menu->addMenu(tr("E&xecute Macro"));
-    for (const Macro &m : loadMacros()) {
-        macros->addAction(m.name, this, [this, text = m.text] { runMacro(text); })
-            ->setEnabled(canSend);
-    }
+    buildModemMenu(menu->addMenu(Icons::get("usb"), tr("Xmodem, Ymodem, Zmodem")));
+
+    QMenu *macros = menu->addMenu(Icons::get("script"), tr("E&xecute Macro"));
+    addMacrosToMenu(macros, loadMacros(), canSend, [this](const Macro &m) {
+        if (m.script.isEmpty())
+            runMacro(m.text);
+        else
+            emit scriptRequested(m.script);
+    });
     if (!macros->isEmpty())
         macros->addSeparator();
     macros->addAction(tr("&Manage Macros..."), this, [this] {

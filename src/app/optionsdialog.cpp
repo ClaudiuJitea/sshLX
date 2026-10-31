@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QLineEdit>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -172,8 +173,18 @@ OptionsDialog::OptionsDialog(MainWindow *main) : QDialog(main), m_main(main)
     mouse->addWidget(withHint(m_confirmPaste, tr("Offers to send them one at a time with "
                                                  "Paste Configuration. Not asked when the "
                                                  "program has bracketed paste on.")));
+    m_zmodemAuto = new QCheckBox(tr("Offer a Zmodem transfer when sz or rz starts"));
+    m_zmodemAuto->setChecked(st.value("transfers/zmodemAuto", true).toBool());
+    m_python = new QLineEdit(st.value("scripts/python", "python3").toString());
+    auto *pyForm = form();
+    pyForm->addRow(tr("Python for scripts"), m_python);
+    auto *more = new QVBoxLayout;
+    more->setSpacing(10);
+    more->addWidget(withHint(m_zmodemAuto, tr("Nothing is received or sent until you accept.")));
+    more->addLayout(pyForm);
     addPage("terminal", tr("Terminal"),
-            page(tr("Terminal"), tr("Mouse, copy and paste"), {card(tr("Mouse"), mouse)}));
+            page(tr("Terminal"), tr("Mouse, copy and paste"),
+                 {card(tr("Mouse"), mouse), card(tr("Transfers and scripts"), more)}));
 
     addPage("palette", tr("Highlighting"), buildHighlighting());
 
@@ -440,6 +451,9 @@ void OptionsDialog::apply()
     st.setValue("behaviour/restoreSessions", m_restore->isChecked());
     st.setValue("behaviour/closeTabOnExit", m_closeOnExit->isChecked());
     st.setValue("behaviour/reuseTab", m_reuseTab->isChecked());
+    st.setValue("transfers/zmodemAuto", m_zmodemAuto->isChecked());
+    st.setValue("scripts/python", m_python->text().trimmed().isEmpty() ? QStringLiteral("python3")
+                                                                       : m_python->text().trimmed());
     st.setValue("terminal/copyOnSelect", m_copyOnSelect->isChecked());
     st.setValue("terminal/confirmMultilinePaste", m_confirmPaste->isChecked());
     st.setValue("terminal/rightClick", m_rightClick->currentData());

@@ -24,6 +24,10 @@ class QFrame;
 class QHBoxLayout;
 class QMenu;
 class EventLogDialog;
+class LogonRunner;
+class ModemTransfer;
+class QProgressBar;
+struct LogonStep;
 
 class SessionWidget : public QWidget {
     Q_OBJECT
@@ -94,6 +98,31 @@ public:
     void changeTitle();
     void setCustomTitle(const QString &text);
     void runMacro(const QString &text);
+    // For several tabs at once, so without Paste Configuration's review dialog.
+    bool canSendCommands() const;
+    void sendCommand(const QString &line);
+    void sendCommands(const QStringList &lines);
+    // Types text as given, for scripts.
+    void typeText(const QString &text);
+    // Xmodem, Ymodem and Zmodem through the terminal. The remote side must
+    // be started first (sz, rz, xmodem...), except that sendModem types "rz"
+    // for Zmodem. Both return false when something else is using the tab.
+    bool sendModem(int protocol, const QStringList &files);
+    bool receiveModem(int protocol, const QString &directory, const QString &saveAs = QString());
+    bool transferRunning() const;
+    // Run after each connect: the connection's logon actions, resolved then
+    // so a change applies to the next connect.
+    using LogonSteps = std::function<QList<LogonStep>()>;
+    void setLogonSteps(LogonSteps f) { m_logonSteps = std::move(f); }
+    // A credential id to its keyring account; empty id: this tab's credential.
+    using CredentialAccount = std::function<QString(const QString &id)>;
+    void setCredentialAccount(CredentialAccount f) { m_credentialAccount = std::move(f); }
+    bool logonRunning() const;
+    // Answers a password prompt without showing or asking; done reports why not.
+    void sendPasswordQuietly(const QString &credentialId,
+                             std::function<void(bool ok, const QString &error)> done);
+    bool atPasswordPrompt() const;
+    QString allTextForScripts() { return allText(); }
     // Add Keyword: starts from the selected text.
     void addKeyword();
     void clearScrollback();
@@ -134,6 +163,9 @@ signals:
     // What the tab can be reopened from changed (for the crash breadcrumb).
     void identityChanged();
     void fileTransferRequested();
+    void scriptRequested(const QString &path);
+    // Everything received, for scripts. Not connected: no copy is made.
+    void outputReceived(const QByteArray &data);
     // Appearance menu: keep this tab's look for its connection, or for
     // every new session.
     void saveAppearanceRequested();
@@ -159,6 +191,12 @@ private:
     void showMatch();
     void closeFind();
     void onRightClick(const QPoint &globalPos, const QPoint &cell, bool ctrl);
+    void buildModemMenu(QMenu *menu);
+    void showTask(const QString &text, bool canStop);
+    void closeTask(const QString &finalText = QString());
+    void beginModem();
+    void offerZmodem(bool receiving);
+    void runLogonPassword(const QString &credential);
 
     sshlx_session *m_session = nullptr;
     QString m_customTitle, m_serverTitle;
@@ -170,6 +208,16 @@ private:
     ConfigPush *m_push;
     ConfigPushBar *m_pushBar;
     FindBar *m_findBar;
+    QFrame *m_taskBar;
+    QLabel *m_taskLabel;
+    QProgressBar *m_taskProgress;
+    QPushButton *m_taskStop, *m_taskClose;
+    ModemTransfer *m_modem;
+    LogonRunner *m_logon;
+    LogonSteps m_logonSteps;
+    CredentialAccount m_credentialAccount;
+    QByteArray m_zTail;              // the end of the last output, for a split header
+    bool m_zOffered = false;
     struct FindMatch { int row, start, len; };
     QStringList m_findRows;       // every row of the buffer, oldest first
     QList<FindMatch> m_matches;

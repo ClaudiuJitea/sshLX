@@ -8,6 +8,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDockWidget>
+#include <QInputDialog>
 #include <DockAreaWidget.h>
 #include <DockManager.h>
 #include <DockWidget.h>
@@ -35,13 +37,16 @@
 #include <QRegularExpression>
 #include <functional>
 
+#include "commandwindow.h"
 #include "connectionspanel.h"
 #include "connectionstore.h"
 #include "connectiontreemodel.h"
 #include "documentarea.h"
 #include "keyring.h"
+#include "macros.h"
 #include "optionsdialog.h"
 #include "propertygrid.h"
+#include "scripthost.h"
 #include "startpage.h"
 #include "theme.h"
 #include "serialmanager.h"
@@ -50,6 +55,8 @@
 #include "terminallook.h"
 #include "settingsdialog.h"
 #include "shortcuts.h"
+#include "tftpdialog.h"
+#include "tftpserver.h"
 #include "updatecheck.h"
 
 // Resources live in the sshlx-app static library, so they must be
@@ -173,6 +180,36 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
         connect(m_store, sig, this, &MainWindow::refreshRecent);
     connect(m_store, &ConnectionStore::nodeChanged, this, &MainWindow::refreshRecent);
     refreshRecent();
+
+    // Command Window and button bar: QMainWindow's own docks, outside the
+    // session area, so that no tab can land in them and layouts keep working.
+    m_command = new CommandWindow(m_docs);
+    m_commandDock = new QDockWidget(tr("Command Window"), this);
+    m_commandDock->setObjectName("CommandDock");
+    m_commandDock->setFeatures(QDockWidget::DockWidgetClosable);
+    m_commandDock->setAllowedAreas(Qt::BottomDockWidgetArea);
+    m_commandDock->setWidget(m_command);
+    addDockWidget(Qt::BottomDockWidgetArea, m_commandDock);
+    m_commandDock->setVisible(st.value("window/commandWindow", false).toBool());
+    m_buttonBar = new ButtonBar(this);
+    addToolBar(st.value("window/buttonBarBottom", false).toBool() ? Qt::BottomToolBarArea
+                                                                  : Qt::TopToolBarArea, m_buttonBar);
+    m_buttonBar->setVisible(st.value("window/buttonBar", true).toBool());
+    connect(m_buttonBar, &ButtonBar::macroTriggered, this, &MainWindow::runMacro);
+    auto manageMacros = [this] {
+        MacroDialog dlg(this);
+        dlg.exec();
+    };
+    connect(m_buttonBar, &ButtonBar::manageRequested, this, manageMacros);
+    m_tftp = new TftpServer(this);
+    m_scripts = new ScriptHost(this);
+    auto *tftpLabel = new QLabel;
+    statusBar()->addPermanentWidget(tftpLabel);
+    auto updateTftp = [this, tftpLabel] {
+        tftpLabel->setText(m_tftp->running() ? tr("TFTP on port %1").arg(m_tftp->port()) : QString());
+    };
+    connect(m_tftp, &TftpServer::logLine, this, updateTftp);
+
     buildMenus();
     m_sendNextLabel = new QLabel;
     statusBar()->addPermanentWidget(m_sendNextLabel);
@@ -241,6 +278,17 @@ void MainWindow::buildMenus()
     QMenu *view = menuBar()->addMenu(tr("&View"));
     view->addAction(m_connectionsDock->toggleViewAction());
     view->addAction(m_configDock->toggleViewAction());
+    QAction *commandAct = m_commandDock->toggleViewAction();
+    commandAct->setIcon(Icons::get("send"));
+    connect(commandAct, &QAction::triggered, this, [this](bool on) {
+        if (on)
+            m_command->focusInput();
+    });
+    sc.add("view.commandWindow", commandAct, QKeySequence("Ctrl+Shift+B"));
+    view->addAction(commandAct);
+    view->addAction(m_buttonBar->toggleViewAction());
+    m_workspaceMenu = view->addMenu(Icons::get("workspace"), tr("&Workspaces"));
+    connect(m_workspaceMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildWorkspaceMenu);
     QAction *panelsRight = view->addAction(tr("Side Panels on the R&ight"));
     panelsRight->setCheckable(true);
     panelsRight->setChecked(QSettings().value("window/panelsRight", false).toBool());
@@ -351,6 +399,24 @@ void MainWindow::buildMenus()
                                   "choose File Transfer."));
     });
     sc.add("tools.fileTransfer", transfer, QKeySequence());
+    QAction *tftp = tools->addAction(Icons::get("usb"), tr("TFTP &Server..."), this, [this] {
+        if (!m_tftpDialog) {
+            m_tftpDialog = new TftpDialog(m_tftp, this);
+            m_tftpDialog->setAttribute(Qt::WA_DeleteOnClose);
+        }
+        m_tftpDialog->show();
+        m_tftpDialog->raise();
+    });
+    sc.add("tools.tftp", tftp, QKeySequence());
+    tools->addAction(Icons::get("script"), tr("&Macros..."), this, [this] {
+        MacroDialog dlg(this);
+        dlg.exec();
+    });
+    QAction *runScript = tools->addAction(Icons::get("script"), tr("&Run Script..."), this,
+                                          &MainWindow::runScriptFile);
+    sc.add("tools.runScript", runScript, QKeySequence());
+    m_scriptMenu = tools->addMenu(tr("Scr&ipts"));
+    connect(m_scriptMenu, &QMenu::aboutToShow, this, &MainWindow::rebuildScriptMenu);
     QAction *evlog = tools->addAction(Icons::get("event-log"), tr("&Event Log"), this, [this] {
         if (current())
             current()->showEventLog();
@@ -376,6 +442,227 @@ void MainWindow::buildMenus()
                                      &MainWindow::checkForUpdates);
     help->addSeparator();
     help->addAction(Icons::get("info"), tr("&About sshLX"), this, &MainWindow::showAbout);
+}
+
+void MainWindow::runMacro(const Macro &macro, bool onTargets)
+{
+    if (!macro.script.isEmpty()) {
+        m_scripts->run(macro.script);
+    } else if (onTargets) {
+        m_command->send(macro.text);
+    } else if (SessionWidget *s = current()) {
+        if (s->canSendCommands())
+            s->runMacro(macro.text);
+        else
+            statusBar()->showMessage(tr("This tab can't take commands right now."), 4000);
+    } else {
+        statusBar()->showMessage(tr("Open a terminal tab first."), 4000);
+    }
+}
+
+void MainWindow::closeTabNow(SessionWidget *s)
+{
+    m_docs->removeSession(s);
+    writeOpenTabsBreadcrumb();
+}
+
+SessionWidget *MainWindow::openByName(const QString &name, QString *error)
+{
+    ConnectionNode *found = m_store->tree().findById(name);
+    int matches = found ? 1 : 0;
+    if (!found) {
+        for (ConnectionNode *c : m_store->tree().connections()) {
+            const QString path = c->path();
+            if (c->name == name || path == name || (path + '/' + c->name) == name) {
+                found = c;
+                matches++;
+            }
+        }
+    }
+    if (matches != 1) {
+        *error = matches ? tr("Several connections are called \"%1\"; use Folder/Name.").arg(name)
+                         : tr("No connection is called \"%1\".").arg(name);
+        return nullptr;
+    }
+    const QList<SessionWidget *> before = sessions();
+    openConnection(found);
+    for (SessionWidget *s : sessions())
+        if (!before.contains(s))
+            return s;
+    *error = tr("\"%1\" could not be opened.").arg(name);
+    return nullptr;
+}
+
+void MainWindow::runScriptFile()
+{
+    QSettings st;
+    const QString path = QFileDialog::getOpenFileName(this, tr("Run Script"),
+                                                      st.value("scripts/last").toString(),
+                                                      tr("Python scripts (*.py);;All files (*)"));
+    if (path.isEmpty())
+        return;
+    st.setValue("scripts/last", path);
+    m_scripts->run(path);
+}
+
+void MainWindow::rebuildScriptMenu()
+{
+    m_scriptMenu->clear();
+    const QString dir = ScriptHost::scriptsFolder();
+    const QStringList names = QDir(dir).entryList({"*.py"}, QDir::Files, QDir::Name);
+    for (const QString &n : names)
+        m_scriptMenu->addAction(n, this, [this, path = QDir(dir).filePath(n)] { m_scripts->run(path); });
+    if (names.isEmpty())
+        m_scriptMenu->addAction(tr("(no scripts in the folder)"))->setEnabled(false);
+    m_scriptMenu->addSeparator();
+    m_scriptMenu->addAction(tr("Open Scripts Folder"), this, [dir] {
+        QDir().mkpath(dir);
+        QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
+    });
+    m_scriptMenu->addAction(tr("Show Script Console"), m_scripts, &ScriptHost::showConsole);
+}
+
+// ---- workspaces --------------------------------------------------------------
+QString MainWindow::workspacePath(const QString &name) const
+{
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/workspaces/" +
+           QString::fromLatin1(QUrl::toPercentEncoding(name)) + ".json";
+}
+
+QStringList MainWindow::workspaces() const
+{
+    const QDir dir(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) + "/workspaces");
+    QStringList names;
+    for (const QString &f : dir.entryList({"*.json"}, QDir::Files))
+        names.append(QUrl::fromPercentEncoding(QFileInfo(f).completeBaseName().toLatin1()));
+    names.sort(Qt::CaseInsensitive);
+    return names;
+}
+
+int MainWindow::saveWorkspace(const QString &name)
+{
+    const QStringList tabs = openTabEntries();
+    int skipped = 0;
+    for (SessionWidget *s : sessions())
+        if (!s->isFileTransfer())
+            skipped++;
+    skipped -= int(tabs.size());
+    QJsonObject o;
+    o["name"] = name;
+    o["tabs"] = QJsonArray::fromStringList(tabs);
+    o["layout"] = QString::fromLatin1(m_docs->saveLayout().toBase64());
+    const QString path = workspacePath(name);
+    QDir().mkpath(QFileInfo(path).path());
+    QSaveFile f(path);
+    if (!f.open(QIODevice::WriteOnly) || f.write(QJsonDocument(o).toJson()) < 0 || !f.commit()) {
+        DialogKit::error(this, tr("Workspace not saved"), f.errorString());
+        return -1;
+    }
+    return skipped;
+}
+
+bool MainWindow::removeWorkspace(const QString &name)
+{
+    return QFile::remove(workspacePath(name));
+}
+
+bool MainWindow::openWorkspace(const QString &name, bool replace)
+{
+    QFile f(workspacePath(name));
+    if (!f.open(QIODevice::ReadOnly))
+        return false;
+    const QJsonObject o = QJsonDocument::fromJson(f.readAll()).object();
+    QStringList tabs;
+    for (const QJsonValue &v : o["tabs"].toArray())
+        tabs.append(v.toString());
+    if (replace) {
+        for (SessionWidget *s : sessions())
+            m_docs->removeSession(s);
+    } else {
+        // Same tabs can be open already: give them fresh dock names.
+        for (QString &t : tabs)
+            t = t.section('\t', 1).prepend('\t');
+    }
+    restoreTabs(tabs);
+    if (replace)
+        applySavedLayout(QByteArray::fromBase64(o["layout"].toString().toLatin1()));
+    return true;
+}
+
+void MainWindow::applySavedLayout(const QByteArray &layout)
+{
+    m_docs->restoreLayout(layout);
+    if (QSettings().value("window/panelsRight", false).toBool())
+        m_docs->setSidePanelsRight(true);
+    for (SessionWidget *s : m_docs->sessions())
+        if (ads::CDockWidget *dw = m_docs->dockFor(s))
+            if (dw->isClosed())
+                dw->toggleView(true);
+}
+
+void MainWindow::saveWorkspaceAs()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(this, tr("Save Workspace"), tr("Workspace name:"),
+                                               QLineEdit::Normal, QString(), &ok).trimmed();
+    if (!ok || name.isEmpty())
+        return;
+    if (workspaces().contains(name) &&
+        !DialogKit::confirm(this, tr("Replace workspace?"),
+                            tr("A workspace called \"%1\" exists already.").arg(name), tr("Replace"),
+                            tr("Cancel"), false, true))
+        return;
+    const int skipped = saveWorkspace(name);
+    if (skipped > 0)
+        DialogKit::warning(this, tr("Workspace saved"),
+                           tr("%n tab(s) were left out: they have no saved settings to reopen "
+                              "from, as with a Quick Connect.", nullptr, skipped));
+    else if (skipped == 0)
+        statusBar()->showMessage(tr("Workspace \"%1\" saved.").arg(name), 4000);
+}
+
+void MainWindow::chooseWorkspace(const QString &name)
+{
+    int live = 0;
+    for (SessionWidget *s : sessions())
+        if (!s->closeWarning().isEmpty())
+            live++;
+    bool replace = true;
+    if (!sessions().isEmpty()) {
+        QString text = tr("Replace the open tabs, or add the workspace's tabs to them?");
+        if (live)
+            text += "\n\n" + tr("Replacing closes %n running session(s).", nullptr, live);
+        const int choice = DialogKit::message(this, DialogKit::Kind::Question,
+                                              tr("Open workspace \"%1\"").arg(name), text,
+                                              {tr("Cancel"), tr("Add to Open Tabs"), tr("Replace Open Tabs")},
+                                              1);
+        if (choice != 1 && choice != 2)
+            return;
+        replace = choice == 2;
+    }
+    openWorkspace(name, replace);
+}
+
+void MainWindow::rebuildWorkspaceMenu()
+{
+    m_workspaceMenu->clear();
+    m_workspaceMenu->addAction(Icons::get("save"), tr("&Save Current As..."), this,
+                               &MainWindow::saveWorkspaceAs);
+    const QStringList names = workspaces();
+    if (names.isEmpty())
+        return;
+    m_workspaceMenu->addSeparator();
+    for (const QString &n : names)
+        m_workspaceMenu->addAction(n, this, [this, n] { chooseWorkspace(n); });
+    m_workspaceMenu->addSeparator();
+    QMenu *del = m_workspaceMenu->addMenu(Icons::get("close"), tr("&Delete"));
+    for (const QString &n : names)
+        del->addAction(n, this, [this, n] {
+            if (DialogKit::confirm(this, tr("Delete workspace?"),
+                                   tr("Delete the workspace \"%1\"? Its connections stay.").arg(n),
+                                   tr("Delete"), tr("Cancel"), false, true))
+                removeWorkspace(n);
+        });
 }
 
 void MainWindow::launchTool(const QString &exe)
@@ -428,7 +715,20 @@ SessionWidget *MainWindow::openSession(const sshlx_conf *conf,
     connect(s, &SessionWidget::fileTransferRequested, this, [this, s] {
         openFileTransfer(s->conf(), s->displayName(), s->connectionId());
     });
+    connect(s, &SessionWidget::scriptRequested, this, [this](const QString &path) {
+        m_scripts->run(path);
+    });
     attachPasswords(s, connectionId);
+    s->setLogonSteps([this, connectionId] {
+        const ConnectionNode *n = m_store->tree().findById(connectionId);
+        return n ? m_store->tree().resolveLogon(n) : QList<LogonStep>();
+    });
+    s->setCredentialAccount([this, connectionId](const QString &id) {
+        const ConnectionNode *n = m_store->tree().findById(connectionId);
+        const Credential *c = id.isEmpty() ? (n ? m_store->tree().resolveCredential(n) : nullptr)
+                                           : m_store->tree().credential(id);
+        return c ? Keyring::credentialAccount(c->id, false) : QString();
+    });
     s->setSavedPasswords([this, connectionId] {
         const ConnectionNode *n = m_store->tree().findById(connectionId);
         const Credential *linked = n ? m_store->tree().resolveCredential(n) : nullptr;
@@ -801,6 +1101,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
         return;
     }
     saveWindowState();
+    m_scripts->stopAll();
     // A clean exit: no crash breadcrumb.
     QFile::remove(QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation) +
                   "/open-tabs.crash");
@@ -843,6 +1144,9 @@ void MainWindow::saveWindowState()
     st.setValue("window/geometry", saveGeometry());
     st.setValue("window/layout2", m_docs->saveLayout());
     st.setValue("session/openTabs", openTabEntries());
+    st.setValue("window/buttonBarBottom", toolBarArea(m_buttonBar) == Qt::BottomToolBarArea);
+    st.setValue("window/commandWindow", !m_commandDock->isHidden());
+    st.setValue("window/buttonBar", !m_buttonBar->isHidden());
 }
 
 // Keeps the list of open tabs on disk while running, so that after an

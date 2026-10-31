@@ -244,6 +244,14 @@ QMap<QString, QString> ConnectionTree::resolveInherited(const ConnectionNode *n)
     return r;
 }
 
+QList<LogonStep> ConnectionTree::resolveLogon(const ConnectionNode *n) const
+{
+    for (; n; n = n->parent)
+        if (!n->logon.isEmpty())
+            return n->logon;
+    return {};
+}
+
 // ---- JSON --------------------------------------------------------------------
 static QJsonObject nodeToJson(const ConnectionNode *n)
 {
@@ -254,6 +262,19 @@ static QJsonObject nodeToJson(const ConnectionNode *n)
     if (!n->description.isEmpty()) o["description"] = n->description;
     if (!n->icon.isEmpty()) o["icon"] = n->icon;
     if (!n->credential.isEmpty()) o["credential"] = n->credential;
+    if (!n->logon.isEmpty()) {
+        QJsonArray steps;
+        for (const LogonStep &s : n->logon) {
+            QJsonObject e;
+            if (!s.wait.isEmpty()) e["wait"] = s.wait;
+            if (s.regex) e["regex"] = true;
+            if (!s.send.isEmpty()) e["send"] = s.send;
+            if (s.password) e["password"] = true;
+            if (!s.credential.isEmpty()) e["credential"] = s.credential;
+            steps.append(e);
+        }
+        o["logon"] = steps;
+    }
     if (n->isFolder()) {
         o["expanded"] = n->expanded;
         if (!n->properties.isEmpty()) {
@@ -290,6 +311,11 @@ static ConnectionNode *nodeFromJson(const QJsonObject &o, QString *error)
     n->description = o["description"].toString();
     n->icon = o["icon"].toString();
     n->credential = o["credential"].toString();
+    for (const QJsonValue &v : o["logon"].toArray()) {
+        const QJsonObject e = v.toObject();
+        n->logon.append({e["wait"].toString(), e["regex"].toBool(), e["send"].toString(),
+                         e["password"].toBool(), e["credential"].toString()});
+    }
     if (n->isFolder()) {
         n->expanded = o["expanded"].toBool(true);
         const QJsonObject p = o["properties"].toObject();

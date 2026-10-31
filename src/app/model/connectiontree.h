@@ -22,6 +22,8 @@
 
 #include <memory>
 
+#include "logonrunner.h"
+
 // A shared login. Connections and folders link to it by id, so changing it
 // here changes every linked connection. The password and key passphrase are
 // never in this struct or in any file: they live in the system keyring under
@@ -52,6 +54,7 @@ public:
     QStringList inherit;      // Conf key ids inherited from folders
     QMap<QString, QString> properties;   // folder values: key id -> value
     QString credential;       // Credential id; empty: use the nearest folder's
+    QList<LogonStep> logon;   // Run after connecting; empty: the nearest folder's
 
     ConnectionNode *parent = nullptr;
     QList<ConnectionNode *> children;
@@ -112,6 +115,8 @@ public:
     // The credential a node uses: its own link, or its nearest folder's. A
     // link to a credential that no longer exists counts as none.
     const Credential *resolveCredential(const ConnectionNode *n) const;
+    // The logon actions a node uses: its own, or its nearest folder's.
+    QList<LogonStep> resolveLogon(const ConnectionNode *n) const;
     // Connections using the credential, directly or through a folder.
     QList<ConnectionNode *> linkedConnections(const QString &id) const;
     // Forget every direct link to the credential.

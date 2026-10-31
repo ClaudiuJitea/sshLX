@@ -85,6 +85,25 @@ Automated against a fake device by `ctest` (`tests/session_e2e_test.cpp`); these
 - [ ] Test SSH and SFTP without a listening port, using PuTTY's uppity on stdio:
       `SSHLX_E2E_SFTP_COMMAND="cd DIR && exec uppity --hostkey KEY --allow-none-auth --sessiondir DIR" SSHLX_E2E_SFTP_DIR=DIR session-e2e-test transferTabOverRealSsh`
 
+## 1g. Command Window, button bar, logon, workspaces, transfers, scripts
+
+- [ ] View → Command Window: send to All tabs on two real SSH sessions, then Chosen tabs.
+- [ ] Two lines to two devices: an error on one pauses only that tab.
+- [ ] Button bar: run a macro, a folder's macro, and right-click → Run on Command Window Tabs.
+- [ ] Drag the button bar to the bottom edge, restart: it stays there.
+- [ ] Logon actions on a real switch: `enable`, then its password from a credential.
+- [ ] A step whose text never appears: the bar reports it after 30 seconds, and the terminal stays usable.
+- [ ] Save a workspace with split tabs, close them, reopen: Replace restores the split, Add joins.
+- [ ] Workspace with a Quick Connect tab: the save reports it was left out.
+- [ ] ROMMON or a boot loader: Xmodem an image over a real serial line at 9600.
+- [ ] SSH to a Linux host with lrzsz: `sz file` offers a transfer; Cancel leaves the shell usable.
+- [ ] `rz` offers a file dialog; Send from the terminal menu types `rz` itself.
+- [ ] TFTP: a real switch copies a file from the server on port 69 (see the dialog's hint).
+- [ ] TFTP: uploads refused by default; allowed with the box ticked; an existing file needs the second box.
+- [ ] TFTP status shows in the status bar, and stops when sshLX closes.
+- [ ] Run a script from each place: Tools → Run Script, Tools → Scripts, a macro.
+- [ ] In the AppImage too: a script finds the system's Python.
+
 ## 2. Settings compatibility
 
 | # | Step | Expected |

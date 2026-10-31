@@ -892,3 +892,33 @@ reviewed draft:
   were removed from the repository in 0.6; they remain in the git history
   before v0.6. The `verify-putty` build target still checks that the PuTTY
   tree is untouched.
+
+### 11.x Automation and transfers through the terminal (0.7.3)
+
+- **ModemTransfer** (model library) speaks Xmodem, Xmodem-1K, Ymodem and Zmodem
+  over the same raw session path as file transfer tabs, but switched on and off
+  in a live terminal session. Input is queued in `feed()` and handled from a
+  timer because `output_data` must not send. Output goes to the terminal again
+  when `finished` fires. Zmodem headers are looked for in normal output across
+  chunk boundaries, and only ever lead to a question to the user.
+- Zmodem's ZCOMMAND, which asks the receiver to run a program, is refused and
+  ends the transfer. Received names pass `safeFileName()`, never replace a file,
+  and appear only when complete (`.part` until then).
+- **TftpServer** is plain QUdpSocket code. Each transfer has its own socket, as
+  TFTP requires. `resolve()` confines every path to the folder, links included.
+  `setcap` on the binary is not offered as a fix for port 69: file capabilities
+  make the loader ignore `$ORIGIN`, so sshLX's private libraries would not load.
+- **LogonRunner** is a small expect loop over `OutputText`, which is also what
+  scripts read. Steps live on the node in `connections.json`, and a connection
+  with none uses its nearest folder's. Passwords never pass through it: it asks
+  SessionWidget, which reads the keyring only at a line that looks like a prompt.
+- **ScriptHost** runs `python3` as a separate process rather than embedding
+  Python, so packages gain no libpython dependency and a script crash can't take
+  sessions down. JSON lines over a QLocalServer socket in a private temporary
+  directory, with a one-time token in the environment. `resources/python/sshlx.py`
+  is copied beside the socket and put on PYTHONPATH.
+- The **Command Window** and **button bar** are QMainWindow's own QDockWidget and
+  QToolBar, not ADS docks: session tabs must not be able to land in them, and
+  saved ADS layouts stay valid.
+- **Workspaces** are JSON files holding `openTabEntries()` and the ADS layout, so
+  they share the startup restore path.

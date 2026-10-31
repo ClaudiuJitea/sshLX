@@ -6,9 +6,10 @@ set(CMAKE_AUTORCC ON)
 
 # Connection tree model: Qt Core only (unit-testable without the engine).
 add_library(sshlx-model STATIC model/connectiontree.cpp model/serialrules.cpp
-  model/configpush.cpp model/highlightrules.cpp model/sftpclient.cpp model/scpclient.cpp)
+  model/configpush.cpp model/highlightrules.cpp model/sftpclient.cpp model/scpclient.cpp
+  model/modemtransfer.cpp model/tftpserver.cpp model/logonrunner.cpp)
 target_include_directories(sshlx-model PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/model)
-target_link_libraries(sshlx-model PUBLIC Qt6::Core)
+target_link_libraries(sshlx-model PUBLIC Qt6::Core Qt6::Network)
 
 # Everything but main() is a library, linked into the sshLX executable.
 add_library(sshlx-app STATIC
@@ -37,6 +38,10 @@ add_library(sshlx-app STATIC
   filetransferpanel.cpp
   highlightruledialog.cpp
   macros.cpp
+  commandwindow.cpp
+  logondialog.cpp
+  tftpdialog.cpp
+  scripthost.cpp
   findbar.cpp
   optionsdialog.cpp
   keyring.cpp
@@ -124,10 +129,26 @@ if(TARGET Qt6::Test)
   target_compile_definitions(transfer-test PRIVATE
     SSHLX_FAKE_SFTP="${CMAKE_SOURCE_DIR}/tests/fake_sftp.py")
   add_test(NAME transfer COMMAND transfer-test)
+  add_executable(modem-test ${CMAKE_SOURCE_DIR}/tests/modem_test.cpp)
+  target_link_libraries(modem-test PRIVATE sshlx-model Qt6::Test util)
+  add_test(NAME modem COMMAND modem-test)
+  add_executable(tftp-test ${CMAKE_SOURCE_DIR}/tests/tftp_test.cpp)
+  target_link_libraries(tftp-test PRIVATE sshlx-model Qt6::Test)
+  add_test(NAME tftp COMMAND tftp-test)
+  add_executable(logon-test ${CMAKE_SOURCE_DIR}/tests/logon_test.cpp)
+  target_link_libraries(logon-test PRIVATE sshlx-model Qt6::Test)
+  add_test(NAME logon COMMAND logon-test)
   add_executable(session-e2e-test ${CMAKE_SOURCE_DIR}/tests/session_e2e_test.cpp)
   target_link_libraries(session-e2e-test PRIVATE sshlx-app Qt6::Test)
   target_compile_definitions(session-e2e-test PRIVATE
     SSHLX_FAKE_IOS="${CMAKE_SOURCE_DIR}/tests/fake_ios.py")
   add_test(NAME session-e2e COMMAND session-e2e-test)
   set_tests_properties(session-e2e PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+  add_executable(features-e2e-test ${CMAKE_SOURCE_DIR}/tests/features_e2e_test.cpp)
+  target_link_libraries(features-e2e-test PRIVATE sshlx-app Qt6::Test)
+  target_compile_definitions(features-e2e-test PRIVATE
+    SSHLX_FAKE_IOS="${CMAKE_SOURCE_DIR}/tests/fake_ios.py"
+    SSHLX_TEST_SCRIPTS="${CMAKE_SOURCE_DIR}/tests/scripts")
+  add_test(NAME features-e2e COMMAND features-e2e-test)
+  set_tests_properties(features-e2e PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 endif()

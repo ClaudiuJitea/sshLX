@@ -1,4 +1,5 @@
 #include "connectionspanel.h"
+#include "logondialog.h"
 #include "dialogkit.h"
 #include "icons.h"
 
@@ -355,6 +356,13 @@ void ConnectionsPanel::contextMenu(const QPoint &pos)
         });
     }
     if (n) {
+        menu.addAction(Icons::get("script"), tr("&Logon Actions..."), this, [this, n] {
+            LogonDialog dlg(n->logon, m_store->tree().credentials(), n->isFolder(), this);
+            if (dlg.exec() == QDialog::Accepted) {
+                n->logon = dlg.steps();
+                m_store->touch(n);
+            }
+        });
         menu.addAction(tr("&Rename"), this, [this, n] { editName(n); });
         menu.addAction(Icons::get("close"), tr("&Delete"), this, &ConnectionsPanel::deleteSelected);
         menu.addSeparator();

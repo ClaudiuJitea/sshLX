@@ -14,6 +14,7 @@ class QListWidget;
 // at least 11 pt). Call once at startup, after QApplication exists.
 void applyUiFontSize();
 class QCheckBox;
+class QLineEdit;
 class QTableWidget;
 class QDoubleSpinBox;
 
@@ -31,7 +32,8 @@ private:
 
     MainWindow *m_main;
     QCheckBox *m_restore, *m_reuseTab, *m_closeOnExit, *m_udev, *m_desktop, *m_keyring;
-    QCheckBox *m_copyOnSelect, *m_confirmPaste;
+    QCheckBox *m_copyOnSelect, *m_confirmPaste, *m_zmodemAuto;
+    QLineEdit *m_python;
     class QComboBox *m_rightClick;
     QListWidget *m_keywordList;
     QCheckBox *m_keywordsOn;

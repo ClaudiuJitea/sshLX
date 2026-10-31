@@ -1,5 +1,9 @@
 <!DOCTYPE RCC><RCC version="1.0">
 <qresource prefix="/">
+  <file>icons/send.svg</file>
+  <file>icons/script.svg</file>
+  <file>icons/workspace.svg</file>
+  <file>python/sshlx.py</file>
   <file>icons/grp-cloud.svg</file>
   <file>icons/grp-cluster.svg</file>
   <file>icons/grp-container.svg</file>

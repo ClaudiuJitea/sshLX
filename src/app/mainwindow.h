@@ -15,6 +15,13 @@ class SerialPortList;
 class PropertyGrid;
 class SerialManager;
 class QToolBar;
+class QDockWidget;
+class ButtonBar;
+class CommandWindow;
+class ScriptHost;
+class TftpDialog;
+class TftpServer;
+struct Macro;
 namespace ads { class CDockManager; class CDockWidget; }
 class QMenu;
 class QLabel;
@@ -53,6 +60,25 @@ public:
     SerialManager *serialManager() const { return m_serial; }
     void globalEvent(sshlx_global_event ev, const QString &text);
     QList<SessionWidget *> sessions() const;
+    CommandWindow *commandWindow() const { return m_command; }
+    ButtonBar *buttonBar() const { return m_buttonBar; }
+    ScriptHost *scripts() const { return m_scripts; }
+    TftpServer *tftpServer() const { return m_tftp; }
+    void runMacro(const Macro &macro, bool onTargets);
+    // Closes the tab without asking.
+    void closeTabNow(SessionWidget *s);
+    // Opens a connection by name, Folder/Name or id; nullptr with *error set.
+    SessionWidget *openByName(const QString &name, QString *error);
+
+    // Named sets of tabs with their layout, kept as files. Tabs that have no
+    // saved settings, such as a Quick Connect, can't be reopened and are left
+    // out; save returns how many.
+    QStringList workspaces() const;
+    int saveWorkspace(const QString &name);
+    bool removeWorkspace(const QString &name);
+    // replace: close what is open and take the saved layout. Otherwise the
+    // saved tabs join the open ones.
+    bool openWorkspace(const QString &name, bool replace);
 
 public slots:
     void newSession();
@@ -84,6 +110,13 @@ private:
     void saveAppearance(SessionWidget *s, bool asDefault);
     void rememberRecent(const QString &connectionId);
     void refreshRecent();
+    void rebuildWorkspaceMenu();
+    void saveWorkspaceAs();
+    void chooseWorkspace(const QString &name);
+    void applySavedLayout(const QByteArray &layout);
+    QString workspacePath(const QString &name) const;
+    void runScriptFile();
+    void rebuildScriptMenu();
 
     DocumentArea *m_docs;
     ConnectionStore *m_store;
@@ -101,4 +134,12 @@ private:
     QMenu *m_sessionMenu = nullptr;
     QLabel *m_sendNextLabel = nullptr;
     QAction *m_updateAction = nullptr;
+    QMenu *m_workspaceMenu = nullptr;
+    QMenu *m_scriptMenu = nullptr;
+    QDockWidget *m_commandDock = nullptr;
+    CommandWindow *m_command = nullptr;
+    ButtonBar *m_buttonBar = nullptr;
+    ScriptHost *m_scripts = nullptr;
+    TftpServer *m_tftp = nullptr;
+    QPointer<TftpDialog> m_tftpDialog;
 };

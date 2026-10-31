@@ -52,7 +52,8 @@ Priority: optional
 Architecture: $ARCH_DEB
 Installed-Size: $SIZE
 Depends: $DEPENDS, libsecret-1-0
-Recommends: qt6-wayland, gnome-keyring | kwalletmanager
+Recommends: qt6-wayland, gnome-keyring | kwalletmanager, python3
+Suggests: lrzsz
 Maintainer: Claudiu Jitea <noreply@github.com>
 Homepage: https://github.com/ClaudiuJitea/sshLX
 Description: Tabbed, session-managed SSH, Telnet and serial client

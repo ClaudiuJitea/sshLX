@@ -34,6 +34,13 @@
 - **Keyword highlighting:** colour words or regular expressions in live output, each with its own colours, in priority order. Select text and choose Add Keyword, or manage the list in Options → Highlighting. Ctrl+Shift+H toggles it.
 - **File transfer:** right-click an SSH connection or tab and choose **File Transfer** for a two-pane file manager in its own tab: drag files either way, whole folders included, with a queue, a toolbar for rename, delete and new folder on either side, and a filter. It logs in the same way as the connection, saved passwords included. Devices without SFTP, such as many switches, get SCP instead: type the remote path and send or fetch one file at a time.
 - **Credentials Manager:** shared logins (user name, password, private key and its passphrase) linked to connections or whole folders. Change one and every linked connection uses it at its next login. Secrets are kept only in the system keyring. For prompts inside a session, such as `sudo`, use **Send Saved Password** in the terminal menu.
+- **Command Window** (View menu, Ctrl+Shift+B): type a command once and send it to the current tab, the visible tabs, all tabs or a chosen few. Several lines go out one at a time, and each tab pauses on its own if its device complains.
+- **Button bar:** your macros as a row of buttons, with folders as drop-down menus. Move it to the top or bottom edge. Right-click a button to run it on the Command Window's tabs. A macro can also run a Python script.
+- **Logon actions:** right-click a connection or folder for steps that run after connecting: wait for some text, then send a reply or a saved password, such as `enable` followed by its password. Passwords go only to a line that looks like a password prompt.
+- **Named workspaces** (View → Workspaces): save the open tabs and their layout under a name, and reopen them, replacing the open tabs or joining them.
+- **Xmodem, Ymodem and Zmodem** in the terminal menu, for ROM monitors, boot loaders and other devices with no SFTP, on serial, SSH or Telnet. Starting `sz` or `rz` on the remote side offers a Zmodem transfer, and nothing is saved until you accept.
+- **TFTP server** (Tools menu) for switches and routers that fetch images and configurations. It serves one folder, read-only unless you allow uploads.
+- **Python scripting** (Tools → Run Script): drive tabs from a script, wait for output and read the screen, in the system's own Python. Scripts can use saved passwords but never see them. See [docs/SCRIPTING.md](docs/SCRIPTING.md).
 - **In-tab prompts** for host keys, weak crypto and log files, with a **Reconnect** bar when a session ends.
 - **Opt-in password storage** in the system keyring (GNOME Keyring / KWallet), never in a file.
 - **Dark and light themes,** configurable shortcuts and an interface font size setting.
@@ -49,9 +56,9 @@
 Download the packages from the [latest release](https://github.com/ClaudiuJitea/sshLX/releases/latest).
 
 ```sh
-sudo apt install ./sshlx_0.7.1_amd64.deb      # Debian / Ubuntu
+sudo apt install ./sshlx_0.7.3_amd64.deb      # Debian / Ubuntu
 # or, on any distribution:
-chmod +x sshLX-0.7.1-x86_64.AppImage && ./sshLX-0.7.1-x86_64.AppImage
+chmod +x sshLX-0.7.3-x86_64.AppImage && ./sshLX-0.7.3-x86_64.AppImage
 ```
 
 Serial ports need membership of the `dialout` group (`uucp` on Arch): `sudo usermod -aG dialout $USER`.
@@ -86,7 +93,9 @@ sshLX replaces only the GTK front end, with a small C engine API and a Qt UI. It
 |---|---|
 | Sessions | PuTTY's `~/.putty/sessions` (or `~/.config/putty`) |
 | Tree, folders, inheritance | `~/.config/sshLX/connections.json` |
-| Layout, shortcuts, options | `~/.config/sshLX/sshLX.conf` |
+| Layout, shortcuts, options, macros | `~/.config/sshLX/sshLX.conf` |
+| Workspaces | `~/.config/sshLX/workspaces/` |
+| Scripts menu | `~/.config/sshLX/scripts/` |
 | Passwords (opt-in) | system keyring only |
 
 ## Licence and credits
@@ -99,3 +108,4 @@ sshLX is released under the [MIT licence](LICENSE).
   - [Qt Advanced Docking System](https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System) 4.4.1 (LGPL-2.1). Small fixes are applied in `cmake/patches/`.
   - [QtKeychain](https://github.com/frankosterfeld/qtkeychain) 0.15.0 (BSD-3-Clause);
   - libudev (LGPL-2.1), loaded at runtime.
+- **Optional at runtime:** Python 3, for scripts. It is not linked in.
